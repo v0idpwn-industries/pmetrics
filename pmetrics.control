@@ -1,0 +1,4 @@
+comment = 'A metrics collection extension'
+default_version = '0.1'
+relocatable = 'false'
+schema = 'pmetrics'
