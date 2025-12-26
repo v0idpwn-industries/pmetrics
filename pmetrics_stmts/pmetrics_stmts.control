@@ -1,0 +1,7 @@
+# pmetrics_stmts extension
+comment = 'Query performance tracking for pmetrics'
+default_version = '0.1'
+module_pathname = '$libdir/pmetrics_stmts'
+relocatable = false
+schema = 'pmetrics_stmts'
+requires = 'pmetrics'

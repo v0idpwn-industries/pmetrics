@@ -1,0 +1,47 @@
+/** Composite type representing a metric entry */
+CREATE TYPE metric_type AS (name TEXT, labels JSONB, type TEXT, bucket INTEGER, value BIGINT);
+
+/** Composite type representing a histogram bucket upper bound */
+CREATE TYPE histogram_buckets_type AS (bucket INTEGER);
+
+/**
+ * Increment a counter by 1.
+ * Returns the new counter value, or NULL if pmetrics.enabled=false.
+ */
+CREATE FUNCTION increment_counter (name TEXT, labels JSONB) RETURNS BIGINT AS '$libdir/pmetrics' LANGUAGE C STRICT;
+
+/**
+ * Increment a counter by a specified amount (must be > 0).
+ * Returns the new counter value, or NULL if pmetrics.enabled=false.
+ */
+CREATE FUNCTION increment_counter_by (name TEXT, labels JSONB, increment INTEGER) RETURNS BIGINT AS '$libdir/pmetrics' LANGUAGE C STRICT;
+
+/**
+ * Set a gauge to an absolute value.
+ * Returns the value that was set, or NULL if pmetrics.enabled=false.
+ */
+CREATE FUNCTION set_gauge (name TEXT, labels JSONB, value BIGINT) RETURNS BIGINT AS '$libdir/pmetrics' LANGUAGE C STRICT;
+
+/**
+ * Add or subtract from a gauge (value cannot be zero).
+ * Returns the new gauge value, or NULL if pmetrics.enabled=false.
+ */
+CREATE FUNCTION add_to_gauge (name TEXT, labels JSONB, value BIGINT) RETURNS BIGINT AS '$libdir/pmetrics' LANGUAGE C STRICT;
+
+/**
+ * Record a value to a histogram.
+ * Returns the updated bucket count, or NULL if pmetrics.enabled=false.
+ */
+CREATE FUNCTION record_to_histogram (name TEXT, labels JSONB, value FLOAT) RETURNS BIGINT AS '$libdir/pmetrics' LANGUAGE C STRICT;
+
+/**
+ * List all metrics currently stored in shared memory.
+ * Histograms have multiple rows (one per non-empty bucket).
+ * Empty buckets are not returned.
+ */
+CREATE FUNCTION list_metrics () RETURNS SETOF metric_type AS '$libdir/pmetrics' LANGUAGE C STRICT;
+
+/**
+ * List all possible histogram bucket upper bounds based on current configuration.
+ */
+CREATE FUNCTION list_histogram_buckets () RETURNS SETOF histogram_buckets_type AS '$libdir/pmetrics' LANGUAGE C STRICT;
