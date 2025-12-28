@@ -15,8 +15,8 @@
 #include "utils/dsa.h"
 
 /* LWLock tranche IDs (must not conflict with other extensions) */
-#define LWTRANCHE_PMETRICS_DSA  1001
-#define LWTRANCHE_PMETRICS      1002
+#define LWTRANCHE_PMETRICS_DSA 1001
+#define LWTRANCHE_PMETRICS 1002
 
 /* Metric types */
 typedef enum MetricType {
@@ -27,12 +27,11 @@ typedef enum MetricType {
 } MetricType;
 
 /* Shared state stored in static shared memory */
-typedef struct PMetricsSharedState
-{
-	dsa_handle			dsa;
-	dshash_table_handle	metrics_handle;
-	LWLock			   *init_lock;
-	bool				initialized;
+typedef struct PMetricsSharedState {
+	dsa_handle dsa;
+	dshash_table_handle metrics_handle;
+	LWLock *init_lock;
+	bool initialized;
 } PMetricsSharedState;
 
 /**
@@ -49,32 +48,61 @@ extern PMetricsSharedState *pmetrics_get_shared_state(void);
 extern dsa_area *pmetrics_get_dsa(void);
 
 /**
- * Core metric update function - increments or sets a metric value.
- *
- * This is the internal API used by all metric types (counters, gauges, histograms).
- * Creates the metric if it doesn't exist, otherwise updates the existing value.
+ * Increment a counter by 1.
  *
  * @param name_str Metric name
- * @param labels_jsonb JSONB labels (can be NULL)
- * @param type Metric type (COUNTER, GAUGE, HISTOGRAM, HISTOGRAM_SUM)
- * @param bucket Bucket value (for histograms only, 0 otherwise)
- * @param amount Amount to add to the metric value
- * @return New metric value after update
+ * @param labels_jsonb JSONB labels (can be NULL for empty object)
+ * @return New counter value after increment
  */
-extern Datum pmetrics_increment_by(const char *name_str, Jsonb *labels_jsonb,
-								   MetricType type, int bucket, int64 amount);
+extern int64 pmetrics_increment_counter(const char *name_str,
+                                         Jsonb *labels_jsonb);
 
 /**
- * Calculate histogram bucket upper bound for a given value.
+ * Increment a counter by a specific amount.
  *
- * Uses exponential bucketing based on DDSketch algorithm:
- *   gamma = (1 + variability) / (1 - variability)
- *   bucket = ceil(log(value) / log(gamma))
- *
- * Values exceeding buckets_upper_bound are clamped to the maximum bucket.
- * Configuration: pmetrics.bucket_variability, pmetrics.buckets_upper_bound
+ * @param name_str Metric name
+ * @param labels_jsonb JSONB labels (can be NULL for empty object)
+ * @param amount Amount to increment (must be > 0)
+ * @return New counter value after increment
  */
-extern int pmetrics_bucket_for(double value);
+extern int64 pmetrics_increment_counter_by(const char *name_str,
+                                            Jsonb *labels_jsonb, int64 amount);
+
+/**
+ * Set a gauge to a specific value.
+ *
+ * @param name_str Metric name
+ * @param labels_jsonb JSONB labels (can be NULL for empty object)
+ * @param value Value to set
+ * @return The value that was set
+ */
+extern int64 pmetrics_set_gauge(const char *name_str, Jsonb *labels_jsonb,
+                                 int64 value);
+
+/**
+ * Add to a gauge (can be positive or negative).
+ *
+ * @param name_str Metric name
+ * @param labels_jsonb JSONB labels (can be NULL for empty object)
+ * @param amount Amount to add (can be negative; cannot be 0)
+ * @return New gauge value after addition
+ */
+extern int64 pmetrics_add_to_gauge(const char *name_str, Jsonb *labels_jsonb,
+                                    int64 amount);
+
+/**
+ * Record a value to a histogram.
+ *
+ * Creates both a histogram bucket entry and a histogram_sum entry.
+ * This is the recommended way to record histogram values from C code.
+ *
+ * @param name_str Metric name
+ * @param labels_jsonb JSONB labels (can be NULL for empty object)
+ * @param value The value to record
+ * @return Bucket count after recording
+ */
+extern Datum pmetrics_record_histogram(const char *name_str,
+                                       Jsonb *labels_jsonb, double value);
 
 /**
  * Check if metrics collection is currently enabled.

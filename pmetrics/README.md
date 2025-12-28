@@ -1,21 +1,18 @@
 # pmetrics
 
-`pmetrics` is a PostgreSQL extension providing metrics instrumentation for database applications. It implements counters, gauges, and histograms with structured JSONB labels, storing all metrics in PostgreSQL dynamic shared memory.
+pmetrics is a PostgreSQL extension providing metrics collection infrastructure. It implements counters, gauges, and histograms with JSONB labels, stored in dynamic shared memory.
 
 ## Overview
 
-This extension enables collection and querying of application metrics directly within PostgreSQL. Metrics are stored in dynamic shared memory using PostgreSQL's DSA (Dynamic Shared Area) and dshash (dynamic shared hash) APIs, allowing the hash table to grow automatically without fixed limits.
+This extension provides a metrics framework for PostgreSQL extensions and stored procedures. Metrics are stored in dynamic shared memory using PostgreSQL's DSA and dshash APIs, with no predefined limits.
 
-Metrics are accessible via SQL functions, making them suitable for integration with monitoring systems such as Prometheus. The extension also provides a C API for use by other PostgreSQL extensions.
+Metrics can be recorded from PL/pgSQL functions via SQL or from C extensions via the public C API. All metrics are queryable via SQL.
 
-## Features
-
-- **Three metric types**: counters (monotonically increasing), gauges (arbitrary values), and histograms (distribution tracking)
-- **JSONB labels**: Structured key-value labels for multi-dimensional metrics
-- **Dynamic memory allocation**: No predefined limit on metric count; hash table grows as needed
-- **Type safety**: Metrics uniquely identified by (name, labels, type, bucket)
-- **Concurrent access**: Uses dshash partition locking (128 partitions) for efficient parallel operations
-- **C API**: Public interface for extensions to record metrics programmatically
+**Key features:**
+- Three metric types: counters, gauges, histograms
+- JSONB labels for multi-dimensional metrics
+- Exponential histogram bucketing (DDSketch-inspired)
+- Partition-based locking (128 partitions) for concurrent access
 
 ## Installation
 
@@ -180,12 +177,9 @@ PMetricsSharedState *pmetrics_get_shared_state(void);
 /* Get DSA area (for extensions sharing the same DSA) */
 dsa_area *pmetrics_get_dsa(void);
 
-/* Record a metric value */
-Datum pmetrics_increment_by(const char *name_str, Jsonb *labels_jsonb,
-                            MetricType type, int bucket, int64 amount);
-
-/* Calculate histogram bucket for a value */
-int pmetrics_bucket_for(double value);
+/* Record a histogram value (automatically creates bucket and sum entries) */
+Datum pmetrics_record_histogram(const char *name_str, Jsonb *labels_jsonb,
+                                double value);
 
 /* Check if metrics collection is enabled */
 bool pmetrics_is_enabled(void);
@@ -210,23 +204,16 @@ typedef enum MetricType {
 void record_custom_metric(void)
 {
     Jsonb *labels;
-    int bucket;
 
     /* Build labels JSONB */
     labels = build_my_labels();
 
-    /* Record counter */
-    pmetrics_increment_by("custom_events", labels,
-                          METRIC_TYPE_COUNTER, 0, 1);
-
-    /* Record histogram */
-    bucket = pmetrics_bucket_for(123.45);
-    pmetrics_increment_by("custom_latency", labels,
-                          METRIC_TYPE_HISTOGRAM, bucket, 1);
-    pmetrics_increment_by("custom_latency", labels,
-                          METRIC_TYPE_HISTOGRAM_SUM, 0, 123.45);
+    /* Record histogram - automatically creates both bucket and sum entries */
+    pmetrics_record_histogram("custom_latency", labels, 123.45);
 }
 ```
+
+**Note:** For recording counters and gauges, use the SQL functions via `SPI_execute()` or implement similar high-level wrappers. The C API currently focuses on histogram recording, which is the most common use case for extension authors.
 
 ## Limitations
 

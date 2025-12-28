@@ -45,3 +45,9 @@ CREATE FUNCTION list_metrics () RETURNS SETOF metric_type AS '$libdir/pmetrics' 
  * List all possible histogram bucket upper bounds based on current configuration.
  */
 CREATE FUNCTION list_histogram_buckets () RETURNS SETOF histogram_buckets_type AS '$libdir/pmetrics' LANGUAGE C STRICT;
+
+/**
+ * Clear all metrics from shared memory.
+ * Returns the number of metrics deleted.
+ */
+CREATE FUNCTION clear_metrics () RETURNS BIGINT AS '$libdir/pmetrics' LANGUAGE C STRICT;

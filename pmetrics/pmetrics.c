@@ -19,7 +19,8 @@
  *   Defaults to 30000. Values over this will be truncated and fitted into the
  *   last bucket. A notice is raised whenever this happens.
  *
- * Labels are stored as JSONB for structured key-value data. Names are limited to NAMEDATALEN.
+ * Labels are stored as JSONB for structured key-value data. Names are limited
+ * to NAMEDATALEN.
  */
 
 #include "postgres.h"
@@ -74,44 +75,43 @@ static double gamma_val = 0;
 static double log_gamma = 0;
 
 typedef enum LabelsLocation {
-  LABELS_NONE = 0,      /* No labels (empty JSONB or null) */
-  LABELS_LOCAL = 1,     /* labels.local_ptr is valid (search key) */
-  LABELS_DSA = 2        /* labels.dsa_ptr is valid (stored key) */
+	LABELS_NONE = 0,  /* No labels (empty JSONB or null) */
+	LABELS_LOCAL = 1, /* labels.local_ptr is valid (search key) */
+	LABELS_DSA = 2    /* labels.dsa_ptr is valid (stored key) */
 } LabelsLocation;
 
 typedef struct {
-  char name[NAMEDATALEN];
-  LabelsLocation labels_location;
-  union {
-    dsa_pointer dsa_ptr;      /* When LABELS_DSA */
-    Jsonb *local_ptr;         /* When LABELS_LOCAL */
-  } labels;
-  MetricType type;
-  int bucket;  /* Only used for histograms, 0 for counter/gauge */
+	char name[NAMEDATALEN];
+	LabelsLocation labels_location;
+	union {
+		dsa_pointer dsa_ptr; /* When LABELS_DSA */
+		Jsonb *local_ptr;    /* When LABELS_LOCAL */
+	} labels;
+	MetricType type;
+	int bucket; /* Only used for histograms, 0 for counter/gauge */
 } MetricKey;
 
 typedef struct {
-  MetricKey key;
-  int64 value;
+	MetricKey key;
+	int64 value;
 } Metric;
 
 /*
- * Helper function to get JSONB from MetricKey, handling both local and DSA locations.
+ * Helper function to get JSONB from MetricKey, handling both local and DSA
+ * locations.
  */
-static Jsonb *
-get_labels_jsonb(const MetricKey *key, dsa_area *dsa)
+static Jsonb *get_labels_jsonb(const MetricKey *key, dsa_area *dsa)
 {
-	switch (key->labels_location)
-	{
-		case LABELS_LOCAL:
-			return key->labels.local_ptr;
-		case LABELS_DSA:
-			if (key->labels.dsa_ptr != InvalidDsaPointer)
-				return (Jsonb *) dsa_get_address(dsa, key->labels.dsa_ptr);
-			return NULL;
-		case LABELS_NONE:
-		default:
-			return NULL;
+	switch (key->labels_location) {
+	case LABELS_LOCAL:
+		return key->labels.local_ptr;
+	case LABELS_DSA:
+		if (key->labels.dsa_ptr != InvalidDsaPointer)
+			return (Jsonb *)dsa_get_address(dsa, key->labels.dsa_ptr);
+		return NULL;
+	case LABELS_NONE:
+	default:
+		return NULL;
 	}
 }
 
@@ -119,21 +119,20 @@ get_labels_jsonb(const MetricKey *key, dsa_area *dsa)
  * Custom hash function for MetricKey (dshash signature).
  * Handles both local (search) keys and DSA (stored) keys.
  */
-static uint32
-metric_hash_dshash(const void *key, size_t key_size, void *arg)
+static uint32 metric_hash_dshash(const void *key, size_t key_size, void *arg)
 {
-	const MetricKey *k = (const MetricKey *) key;
+	const MetricKey *k = (const MetricKey *)key;
 	uint32 hash;
 	Jsonb *labels;
 
 	hash = string_hash(k->name, NAMEDATALEN);
-	hash ^= hash_bytes((const unsigned char *) &k->type, sizeof(MetricType));
-	hash ^= hash_uint32((uint32) k->bucket);
+	hash ^= hash_bytes((const unsigned char *)&k->type, sizeof(MetricType));
+	hash ^= hash_uint32((uint32)k->bucket);
 
 	/* Hash JSONB labels if present */
 	labels = get_labels_jsonb(k, local_dsa);
 	if (labels != NULL)
-		hash ^= hash_bytes((unsigned char *) labels, VARSIZE(labels));
+		hash ^= hash_bytes((unsigned char *)labels, VARSIZE(labels));
 
 	return hash;
 }
@@ -143,11 +142,11 @@ metric_hash_dshash(const void *key, size_t key_size, void *arg)
  * Handles both local (search) keys and DSA (stored) keys.
  * Returns <0, 0, or >0 like strcmp.
  */
-static int
-metric_compare_dshash(const void *a, const void *b, size_t key_size, void *arg)
+static int metric_compare_dshash(const void *a, const void *b, size_t key_size,
+                                 void *arg)
 {
-	const MetricKey *k1 = (const MetricKey *) a;
-	const MetricKey *k2 = (const MetricKey *) b;
+	const MetricKey *k1 = (const MetricKey *)a;
+	const MetricKey *k2 = (const MetricKey *)b;
 	Jsonb *labels1, *labels2;
 	int cmp;
 
@@ -175,26 +174,47 @@ metric_compare_dshash(const void *a, const void *b, size_t key_size, void *arg)
 	if (labels2 == NULL)
 		return 1;
 
-	return compareJsonbContainers(&labels1->root, &labels2->root);
+	/*
+	 * Use memcmp instead of compareJsonbContainers to avoid collation lookup.
+	 *
+	 * compareJsonbContainers() calls varstr_cmp() which requires
+	 * pg_newlocale_from_collation(), triggering syscache lookups that fail
+	 * during early backend initialization when the system catalog cache is
+	 * not yet available.
+	 *
+	 * Binary comparison is safe here because:
+	 * - JSONB has a canonical binary format (sorted keys, no duplicates)
+	 * - Identical JSON produces identical binary representations
+	 * - We only need equality checking, not locale-aware sorting
+	 */
+	{
+		Size size1 = VARSIZE(labels1);
+		Size size2 = VARSIZE(labels2);
+
+		if (size1 != size2)
+			return (size1 < size2) ? -1 : 1;
+
+		return memcmp(labels1, labels2, size1);
+	}
 }
 
 /*
  * Custom copy function for MetricKey (dshash signature).
  * When inserting a new entry, allocates JSONB to DSA if source has local JSONB.
  */
-static void
-metric_key_copy(void *dst, const void *src, size_t key_size, void *arg)
+static void metric_key_copy(void *dst, const void *src, size_t key_size,
+                            void *arg)
 {
-	MetricKey *dest_key = (MetricKey *) dst;
-	const MetricKey *src_key = (const MetricKey *) src;
+	MetricKey *dest_key = (MetricKey *)dst;
+	const MetricKey *src_key = (const MetricKey *)src;
 	Jsonb *src_labels;
 	Jsonb *dest_labels;
 	Size jsonb_size;
 
 	memcpy(dest_key, src_key, sizeof(MetricKey));
 
-	if (src_key->labels_location == LABELS_LOCAL && src_key->labels.local_ptr != NULL)
-	{
+	if (src_key->labels_location == LABELS_LOCAL &&
+	    src_key->labels.local_ptr != NULL) {
 		src_labels = src_key->labels.local_ptr;
 		jsonb_size = VARSIZE(src_labels);
 
@@ -202,7 +222,8 @@ metric_key_copy(void *dst, const void *src, size_t key_size, void *arg)
 		if (dest_key->labels.dsa_ptr == InvalidDsaPointer)
 			elog(ERROR, "out of dynamic shared memory for metric labels");
 
-		dest_labels = (Jsonb *) dsa_get_address(local_dsa, dest_key->labels.dsa_ptr);
+		dest_labels =
+		    (Jsonb *)dsa_get_address(local_dsa, dest_key->labels.dsa_ptr);
 		memcpy(dest_labels, src_labels, jsonb_size);
 
 		dest_key->labels_location = LABELS_DSA;
@@ -210,13 +231,12 @@ metric_key_copy(void *dst, const void *src, size_t key_size, void *arg)
 }
 
 static const dshash_parameters metrics_params = {
-	.key_size = sizeof(MetricKey),
-	.entry_size = sizeof(Metric),
-	.compare_function = metric_compare_dshash,
-	.hash_function = metric_hash_dshash,
-	.copy_function = metric_key_copy,
-	.tranche_id = LWTRANCHE_PMETRICS
-};
+    .key_size = sizeof(MetricKey),
+    .entry_size = sizeof(Metric),
+    .compare_function = metric_compare_dshash,
+    .hash_function = metric_hash_dshash,
+    .copy_function = metric_key_copy,
+    .tranche_id = LWTRANCHE_PMETRICS};
 
 /* Function declarations */
 void _PG_init(void);
@@ -225,12 +245,16 @@ static void metrics_shmem_startup(void);
 static dshash_table *get_metrics_table(void);
 static void cleanup_metrics_backend(int code, Datum arg);
 static Jsonb *get_labels_jsonb(const MetricKey *key, dsa_area *dsa);
-static void metric_key_copy(void *dst, const void *src, size_t key_size, void *arg);
+static void metric_key_copy(void *dst, const void *src, size_t key_size,
+                            void *arg);
 static void validate_inputs(const char *name);
-static void init_metric_key(MetricKey *key, const char *name, Jsonb *labels_jsonb, MetricType type, int bucket);
+static void init_metric_key(MetricKey *key, const char *name,
+                            Jsonb *labels_jsonb, MetricType type, int bucket);
+static int pmetrics_bucket_for(double value);
+static Datum pmetrics_increment_by(const char *name_str, Jsonb *labels_jsonb,
+                                   MetricType type, int bucket, int64 amount);
 
-static void
-metrics_shmem_request(void)
+static void metrics_shmem_request(void)
 {
 	if (prev_shmem_request_hook)
 		prev_shmem_request_hook();
@@ -239,20 +263,17 @@ metrics_shmem_request(void)
 	RequestNamedLWLockTranche("pmetrics_init", 1);
 }
 
-static void
-metrics_shmem_startup(void)
+static void metrics_shmem_startup(void)
 {
-	bool		found;
+	bool found;
 
 	if (prev_shmem_startup_hook)
 		prev_shmem_startup_hook();
 
 	shared_state = ShmemInitStruct("pmetrics_shared_state",
-								   sizeof(PMetricsSharedState),
-								   &found);
+	                               sizeof(PMetricsSharedState), &found);
 
-	if (!found)
-	{
+	if (!found) {
 		dsa_area *dsa;
 		dshash_table *metrics_table;
 
@@ -266,62 +287,66 @@ metrics_shmem_startup(void)
 		dsa_pin(dsa);
 
 		metrics_table = dshash_create(dsa, &metrics_params, NULL);
-		shared_state->metrics_handle = dshash_get_hash_table_handle(metrics_table);
+		shared_state->metrics_handle =
+		    dshash_get_hash_table_handle(metrics_table);
 
-		shared_state->init_lock = &(GetNamedLWLockTranche("pmetrics_init")[0].lock);
+		shared_state->init_lock =
+		    &(GetNamedLWLockTranche("pmetrics_init")[0].lock);
 		shared_state->initialized = true;
 
 		/*
-		 * Detach from postmaster so backends don't inherit the attachment state.
-		 * The DSA is pinned so it won't be destroyed.
+		 * Detach from postmaster so backends don't inherit the attachment
+		 * state. The DSA is pinned so it won't be destroyed.
 		 */
 		dshash_detach(metrics_table);
 		dsa_detach(dsa);
 
-		elog(DEBUG1, "pmetrics: initialized with DSA handle %lu", (unsigned long)shared_state->dsa);
+		elog(DEBUG1, "pmetrics: initialized with DSA handle %lu",
+		     (unsigned long)shared_state->dsa);
 	}
 }
 
-void _PG_init(void) {
-  int max_bucket_exp;
+void _PG_init(void)
+{
+	int max_bucket_exp;
 
-  DefineCustomBoolVariable("pmetrics.enabled", "Metrics collection enabled",
-                           NULL, &pmetrics_enabled, DEFAULT_ENABLED, PGC_SIGHUP,
-                           0, NULL, NULL, NULL);
+	DefineCustomBoolVariable("pmetrics.enabled", "Metrics collection enabled",
+	                         NULL, &pmetrics_enabled, DEFAULT_ENABLED,
+	                         PGC_SIGHUP, 0, NULL, NULL, NULL);
 
-  DefineCustomRealVariable(
-      "pmetrics.bucket_variability", "Bucket variability for histograms",
-      "Used to calculate bucket boundaries. Bigger = less buckets.",
-      &bucket_variability, DEFAULT_BUCKET_VARIABILITY, 0.01, 1.0,
-      PGC_POSTMASTER, 0, NULL, NULL, NULL);
+	DefineCustomRealVariable(
+	    "pmetrics.bucket_variability", "Bucket variability for histograms",
+	    "Used to calculate bucket boundaries. Bigger = less buckets.",
+	    &bucket_variability, DEFAULT_BUCKET_VARIABILITY, 0.01, 1.0,
+	    PGC_POSTMASTER, 0, NULL, NULL, NULL);
 
-  DefineCustomIntVariable(
-      "pmetrics.buckets_upper_bound", "Maximum value for histogram buckets",
-      "Values bigger than this will be stored in the last bucket. The actual "
-      "value will probably be bigger than the configuration value, as it goes "
-      "to the nearest upper bucket",
-      &buckets_upper_bound, DEFAULT_BUCKETS_UPPER_BOUND, 1, INT_MAX,
-      PGC_POSTMASTER, 0, NULL, NULL, NULL);
+	DefineCustomIntVariable(
+	    "pmetrics.buckets_upper_bound", "Maximum value for histogram buckets",
+	    "Values bigger than this will be stored in the last bucket. The actual "
+	    "value will probably be bigger than the configuration value, as it "
+	    "goes "
+	    "to the nearest upper bucket",
+	    &buckets_upper_bound, DEFAULT_BUCKETS_UPPER_BOUND, 1, INT_MAX,
+	    PGC_POSTMASTER, 0, NULL, NULL, NULL);
 
-  gamma_val = (1 + bucket_variability) / (1 - bucket_variability);
-  log_gamma = log(gamma_val);
+	gamma_val = (1 + bucket_variability) / (1 - bucket_variability);
+	log_gamma = log(gamma_val);
 
-  max_bucket_exp = ceil(log(buckets_upper_bound) / log_gamma);
-  buckets_upper_bound = (int)pow(gamma_val, max_bucket_exp);
+	max_bucket_exp = ceil(log(buckets_upper_bound) / log_gamma);
+	buckets_upper_bound = (int)pow(gamma_val, max_bucket_exp);
 
-  MarkGUCPrefixReserved("pmetrics");
+	MarkGUCPrefixReserved("pmetrics");
 
-  LWLockRegisterTranche(LWTRANCHE_PMETRICS_DSA, "pmetrics_dsa");
-  LWLockRegisterTranche(LWTRANCHE_PMETRICS, "pmetrics");
+	LWLockRegisterTranche(LWTRANCHE_PMETRICS_DSA, "pmetrics_dsa");
+	LWLockRegisterTranche(LWTRANCHE_PMETRICS, "pmetrics");
 
-  prev_shmem_startup_hook = shmem_startup_hook;
-  shmem_startup_hook = metrics_shmem_startup;
-  prev_shmem_request_hook = shmem_request_hook;
-  shmem_request_hook = metrics_shmem_request;
+	prev_shmem_startup_hook = shmem_startup_hook;
+	shmem_startup_hook = metrics_shmem_startup;
+	prev_shmem_request_hook = shmem_request_hook;
+	shmem_request_hook = metrics_shmem_request;
 }
 
-static void
-validate_inputs(const char *name)
+static void validate_inputs(const char *name)
 {
 	if (name == NULL)
 		elog(ERROR, "null input not allowed");
@@ -333,18 +358,15 @@ validate_inputs(const char *name)
 /*
  * Initialize a MetricKey structure with local JSONB pointer
  */
-static void
-init_metric_key(MetricKey *key, const char *name, Jsonb *labels_jsonb, MetricType type, int bucket)
+static void init_metric_key(MetricKey *key, const char *name,
+                            Jsonb *labels_jsonb, MetricType type, int bucket)
 {
 	strlcpy(key->name, name, NAMEDATALEN);
 
-	if (labels_jsonb != NULL)
-	{
+	if (labels_jsonb != NULL) {
 		key->labels.local_ptr = labels_jsonb;
 		key->labels_location = LABELS_LOCAL;
-	}
-	else
-	{
+	} else {
 		key->labels.local_ptr = NULL;
 		key->labels_location = LABELS_NONE;
 	}
@@ -357,17 +379,14 @@ init_metric_key(MetricKey *key, const char *name, Jsonb *labels_jsonb, MetricTyp
  * Cleanup callback when backend exits.
  * Detach from DSA and hash tables.
  */
-static void
-cleanup_metrics_backend(int code, Datum arg)
+static void cleanup_metrics_backend(int code, Datum arg)
 {
-	if (local_metrics_table != NULL)
-	{
+	if (local_metrics_table != NULL) {
 		dshash_detach(local_metrics_table);
 		local_metrics_table = NULL;
 	}
 
-	if (local_dsa != NULL)
-	{
+	if (local_dsa != NULL) {
 		dsa_detach(local_dsa);
 		local_dsa = NULL;
 	}
@@ -382,8 +401,7 @@ cleanup_metrics_backend(int code, Datum arg)
  * The DSA and hash table are created in postmaster during startup.
  * Each backend must attach to get its own valid pointers.
  */
-static dshash_table *
-get_metrics_table(void)
+static dshash_table *get_metrics_table(void)
 {
 	MemoryContext oldcontext;
 
@@ -407,7 +425,8 @@ get_metrics_table(void)
 
 	/*
 	 * Each backend must attach to the DSA to get valid pointers.
-	 * The postmaster keeps the DSA alive, but each backend needs its own attachment.
+	 * The postmaster keeps the DSA alive, but each backend needs its own
+	 * attachment.
 	 */
 	local_dsa = dsa_attach(shared_state->dsa);
 
@@ -418,10 +437,8 @@ get_metrics_table(void)
 	 */
 	dsa_pin_mapping(local_dsa);
 
-	local_metrics_table = dshash_attach(local_dsa,
-										&metrics_params,
-										shared_state->metrics_handle,
-										NULL);
+	local_metrics_table = dshash_attach(local_dsa, &metrics_params,
+	                                    shared_state->metrics_handle, NULL);
 
 	MemoryContextSwitchTo(oldcontext);
 
@@ -434,15 +451,14 @@ get_metrics_table(void)
 	return local_metrics_table;
 }
 
-__attribute__((visibility("default")))
-Datum
-pmetrics_increment_by(const char *name_str, Jsonb *labels_jsonb, MetricType type, int bucket, int64 amount)
+static Datum pmetrics_increment_by(const char *name_str, Jsonb *labels_jsonb,
+                                   MetricType type, int bucket, int64 amount)
 {
-	Metric	   *entry;
-	MetricKey	metric_key;
-	bool		found;
+	Metric *entry;
+	MetricKey metric_key;
+	bool found;
 	dshash_table *table;
-	int64		result;
+	int64 result;
 
 	table = get_metrics_table();
 	if (table == NULL)
@@ -450,7 +466,7 @@ pmetrics_increment_by(const char *name_str, Jsonb *labels_jsonb, MetricType type
 
 	init_metric_key(&metric_key, name_str, labels_jsonb, type, bucket);
 
-	entry = (Metric *) dshash_find_or_insert(table, &metric_key, &found);
+	entry = (Metric *)dshash_find_or_insert(table, &metric_key, &found);
 
 	if (!found)
 		entry->value = 0;
@@ -464,85 +480,88 @@ pmetrics_increment_by(const char *name_str, Jsonb *labels_jsonb, MetricType type
 }
 
 PG_FUNCTION_INFO_V1(increment_counter);
-Datum increment_counter(PG_FUNCTION_ARGS) {
-  Datum new_value;
-  text *name_text;
-  Jsonb *labels_jsonb;
-  char *name_str = NULL;
+Datum increment_counter(PG_FUNCTION_ARGS)
+{
+	Datum new_value;
+	text *name_text;
+	Jsonb *labels_jsonb;
+	char *name_str = NULL;
 
-  if (!pmetrics_enabled)
-    PG_RETURN_NULL();
+	if (!pmetrics_enabled)
+		PG_RETURN_NULL();
 
-  name_text = PG_GETARG_TEXT_PP(0);
-  labels_jsonb = PG_GETARG_JSONB_P(1);
+	name_text = PG_GETARG_TEXT_PP(0);
+	labels_jsonb = PG_GETARG_JSONB_P(1);
 
-  PG_TRY();
-  {
-    name_str = text_to_cstring(name_text);
-    validate_inputs(name_str);
-    new_value = pmetrics_increment_by(name_str, labels_jsonb, METRIC_TYPE_COUNTER, 0, 1);
-  }
-  PG_CATCH();
-  {
-    if (name_str)
-      pfree(name_str);
-    PG_RE_THROW();
-  }
-  PG_END_TRY();
+	PG_TRY();
+	{
+		name_str = text_to_cstring(name_text);
+		validate_inputs(name_str);
+		new_value = pmetrics_increment_by(name_str, labels_jsonb,
+		                                  METRIC_TYPE_COUNTER, 0, 1);
+	}
+	PG_CATCH();
+	{
+		if (name_str)
+			pfree(name_str);
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
 
-  pfree(name_str);
-  return new_value;
+	pfree(name_str);
+	return new_value;
 }
 
 PG_FUNCTION_INFO_V1(increment_counter_by);
-Datum increment_counter_by(PG_FUNCTION_ARGS) {
-  Datum new_value;
-  text *name_text;
-  Jsonb *labels_jsonb;
-  char *name_str = NULL;
-  int increment;
+Datum increment_counter_by(PG_FUNCTION_ARGS)
+{
+	Datum new_value;
+	text *name_text;
+	Jsonb *labels_jsonb;
+	char *name_str = NULL;
+	int increment;
 
-  if (!pmetrics_enabled)
-    PG_RETURN_NULL();
+	if (!pmetrics_enabled)
+		PG_RETURN_NULL();
 
-  PG_TRY();
-  {
-    name_text = PG_GETARG_TEXT_PP(0);
-    labels_jsonb = PG_GETARG_JSONB_P(1);
-    increment = PG_GETARG_INT32(2);
-    name_str = text_to_cstring(name_text);
+	PG_TRY();
+	{
+		name_text = PG_GETARG_TEXT_PP(0);
+		labels_jsonb = PG_GETARG_JSONB_P(1);
+		increment = PG_GETARG_INT32(2);
+		name_str = text_to_cstring(name_text);
 
-    validate_inputs(name_str);
+		validate_inputs(name_str);
 
-    if (increment <= 0)
-      elog(ERROR, "increment must be greater than 0");
+		if (increment <= 0)
+			elog(ERROR, "increment must be greater than 0");
 
-    new_value = pmetrics_increment_by(name_str, labels_jsonb, METRIC_TYPE_COUNTER, 0, increment);
-  }
-  PG_CATCH();
-  {
-    if (name_str)
-      pfree(name_str);
-    PG_RE_THROW();
-  }
-  PG_END_TRY();
+		new_value = pmetrics_increment_by(name_str, labels_jsonb,
+		                                  METRIC_TYPE_COUNTER, 0, increment);
+	}
+	PG_CATCH();
+	{
+		if (name_str)
+			pfree(name_str);
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
 
-  pfree(name_str);
-  return new_value;
+	pfree(name_str);
+	return new_value;
 }
 
 PG_FUNCTION_INFO_V1(set_gauge);
-Datum
-set_gauge(PG_FUNCTION_ARGS)
+Datum set_gauge(PG_FUNCTION_ARGS)
 {
-	Metric	   *entry;
-	MetricKey	metric_key;
-	bool		found;
-	text	   *name_text;
-	Jsonb	   *labels_jsonb;
-	char	   *name_str = NULL;
-	int64		new_value;
-	int64		result;
+	Metric *entry;
+	MetricKey metric_key;
+	bool found;
+	text *name_text;
+	Jsonb *labels_jsonb;
+	char *name_str = NULL;
+	int64 new_value;
+	int64 result;
 	dshash_table *table;
 
 	if (!pmetrics_enabled)
@@ -561,9 +580,10 @@ set_gauge(PG_FUNCTION_ARGS)
 
 		validate_inputs(name_str);
 
-		init_metric_key(&metric_key, name_str, labels_jsonb, METRIC_TYPE_GAUGE, 0);
+		init_metric_key(&metric_key, name_str, labels_jsonb, METRIC_TYPE_GAUGE,
+		                0);
 
-		entry = (Metric *) dshash_find_or_insert(table, &metric_key, &found);
+		entry = (Metric *)dshash_find_or_insert(table, &metric_key, &found);
 
 		/* Key already copied by metric_key_copy function if new entry */
 
@@ -586,175 +606,13 @@ set_gauge(PG_FUNCTION_ARGS)
 }
 
 PG_FUNCTION_INFO_V1(add_to_gauge);
-Datum add_to_gauge(PG_FUNCTION_ARGS) {
-  Datum new_value;
-  text *name_text;
-  Jsonb *labels_jsonb;
-  char *name_str = NULL;
-  int increment;
-
-  if (!pmetrics_enabled)
-    PG_RETURN_NULL();
-
-  PG_TRY();
-  {
-    name_text = PG_GETARG_TEXT_PP(0);
-    labels_jsonb = PG_GETARG_JSONB_P(1);
-    increment = PG_GETARG_INT32(2);
-    name_str = text_to_cstring(name_text);
-
-    if (increment == 0)
-      elog(ERROR, "value can't be 0");
-
-    validate_inputs(name_str);
-
-    new_value = pmetrics_increment_by(name_str, labels_jsonb, METRIC_TYPE_GAUGE, 0, increment);
-  }
-  PG_CATCH();
-  {
-    if (name_str)
-      pfree(name_str);
-
-    PG_RE_THROW();
-  }
-  PG_END_TRY();
-
-  pfree(name_str);
-  return new_value;
-}
-
-PG_FUNCTION_INFO_V1(list_metrics);
-Datum
-list_metrics(PG_FUNCTION_ARGS)
+Datum add_to_gauge(PG_FUNCTION_ARGS)
 {
-	FuncCallContext *funcctx;
-	Metric	  **metrics;
-	int			current_idx;
-
-	if (SRF_IS_FIRSTCALL())
-	{
-		MemoryContext oldcontext;
-		TupleDesc	tupdesc;
-		dshash_table *table;
-		dshash_seq_status status;
-		Metric	   *metric;
-		int			capacity = 16;
-		int			count = 0;
-
-		funcctx = SRF_FIRSTCALL_INIT();
-		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
-
-		if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg("function returning record called in context "
-								   "that cannot accept type record")));
-
-		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
-
-		table = get_metrics_table();
-
-		/*
-		 * Materialize all metrics in the first call.
-		 * We can't use dshash_seq_next() across SRF calls because it holds
-		 * partition locks that must be released between iterations.
-		 */
-		metrics = (Metric **) palloc(capacity * sizeof(Metric *));
-
-		/* Scan the entire hash table and copy all entries */
-		dshash_seq_init(&status, table, false);	/* false = shared lock */
-		while ((metric = (Metric *) dshash_seq_next(&status)) != NULL)
-		{
-			/* Expand array if needed */
-			if (count >= capacity)
-			{
-				capacity *= 2;
-				metrics = (Metric **) repalloc(metrics, capacity * sizeof(Metric *));
-			}
-
-			/* Copy the metric to backend-local memory */
-			metrics[count] = (Metric *) palloc(sizeof(Metric));
-			memcpy(metrics[count], metric, sizeof(Metric));
-			count++;
-		}
-		dshash_seq_term(&status);
-
-		/* Store the materialized metrics and count */
-		funcctx->user_fctx = metrics;
-		funcctx->max_calls = count;
-
-		MemoryContextSwitchTo(oldcontext);
-	}
-
-	funcctx = SRF_PERCALL_SETUP();
-	metrics = (Metric **) funcctx->user_fctx;
-	current_idx = funcctx->call_cntr;
-
-	if (current_idx < funcctx->max_calls)
-	{
-		Metric	   *metric = metrics[current_idx];
-		Datum		values[5];
-		bool		nulls[5] = {false, false, false, false, false};
-		HeapTuple	tuple;
-		Datum		result;
-		const char *type_str;
-
-		/* Convert metric type enum to string */
-		switch (metric->key.type)
-		{
-			case METRIC_TYPE_COUNTER:
-				type_str = "counter";
-				break;
-			case METRIC_TYPE_GAUGE:
-				type_str = "gauge";
-				break;
-			case METRIC_TYPE_HISTOGRAM:
-				type_str = "histogram";
-				break;
-			case METRIC_TYPE_HISTOGRAM_SUM:
-				type_str = "histogram_sum";
-				break;
-			default:
-				type_str = "unknown";
-				break;
-		}
-
-		values[0] = CStringGetTextDatum(metric->key.name);
-
-		if (metric->key.labels_location == LABELS_DSA &&
-			metric->key.labels.dsa_ptr != InvalidDsaPointer)
-		{
-			Jsonb *labels = (Jsonb *) dsa_get_address(local_dsa, metric->key.labels.dsa_ptr);
-			values[1] = JsonbPGetDatum(labels);
-		}
-		else
-		{
-			nulls[1] = true;
-		}
-
-		values[2] = CStringGetTextDatum(type_str);
-		values[3] = Int32GetDatum(metric->key.bucket);
-		values[4] = Int64GetDatum(metric->value);
-		tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
-		result = HeapTupleGetDatum(tuple);
-		SRF_RETURN_NEXT(funcctx, result);
-	}
-	else
-	{
-		/* All metrics returned */
-		SRF_RETURN_DONE(funcctx);
-	}
-}
-
-PG_FUNCTION_INFO_V1(record_to_histogram);
-Datum
-record_to_histogram(PG_FUNCTION_ARGS)
-{
-	Datum		new_value;
-	text	   *name_text;
-	Jsonb	   *labels_jsonb;
-	char	   *name_str = NULL;
-	int			bucket;
-	double		value;
+	Datum new_value;
+	text *name_text;
+	Jsonb *labels_jsonb;
+	char *name_str = NULL;
+	int increment;
 
 	if (!pmetrics_enabled)
 		PG_RETURN_NULL();
@@ -763,17 +621,16 @@ record_to_histogram(PG_FUNCTION_ARGS)
 	{
 		name_text = PG_GETARG_TEXT_PP(0);
 		labels_jsonb = PG_GETARG_JSONB_P(1);
-		value = PG_GETARG_FLOAT8(2);
+		increment = PG_GETARG_INT32(2);
 		name_str = text_to_cstring(name_text);
+
+		if (increment == 0)
+			elog(ERROR, "value can't be 0");
 
 		validate_inputs(name_str);
 
-		bucket = pmetrics_bucket_for(value);
-
-		new_value = pmetrics_increment_by(name_str, labels_jsonb, METRIC_TYPE_HISTOGRAM, bucket, 1);
-
-		/* Add to sum (bucket is always 0 for sum type) */
-		pmetrics_increment_by(name_str, labels_jsonb, METRIC_TYPE_HISTOGRAM_SUM, 0, (int64)value);
+		new_value = pmetrics_increment_by(name_str, labels_jsonb,
+		                                  METRIC_TYPE_GAUGE, 0, increment);
 	}
 	PG_CATCH();
 	{
@@ -788,43 +645,300 @@ record_to_histogram(PG_FUNCTION_ARGS)
 	return new_value;
 }
 
-PG_FUNCTION_INFO_V1(list_histogram_buckets);
-Datum
-list_histogram_buckets(PG_FUNCTION_ARGS)
+PG_FUNCTION_INFO_V1(list_metrics);
+Datum list_metrics(PG_FUNCTION_ARGS)
 {
 	FuncCallContext *funcctx;
-	int		   *buckets;
-	int			current_idx;
+	Metric **metrics;
+	int current_idx;
 
-	if (SRF_IS_FIRSTCALL())
-	{
+	if (SRF_IS_FIRSTCALL()) {
 		MemoryContext oldcontext;
-		TupleDesc	tupdesc;
-		int			max_bucket_exp;
-		int			num_buckets;
-		int			i;
-		int			count;
+		TupleDesc tupdesc;
+		dshash_table *table;
+		dshash_seq_status status;
+		Metric *metric;
+		int capacity = 16;
+		int count = 0;
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
 		if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
-			ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							errmsg("function returning record called in context "
-								   "that cannot accept type record")));
+			ereport(ERROR,
+			        (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			         errmsg("function returning record called in context "
+			                "that cannot accept type record")));
+
+		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
+
+		table = get_metrics_table();
+
+		/*
+		 * Materialize all metrics in the first call.
+		 * We can't use dshash_seq_next() across SRF calls because it holds
+		 * partition locks that must be released between iterations.
+		 */
+		metrics = (Metric **)palloc(capacity * sizeof(Metric *));
+
+		/* Scan the entire hash table and copy all entries */
+		dshash_seq_init(&status, table, false); /* false = shared lock */
+		while ((metric = (Metric *)dshash_seq_next(&status)) != NULL) {
+			Jsonb *labels_copy = NULL;
+
+			/* Expand array if needed */
+			if (count >= capacity) {
+				capacity *= 2;
+				metrics =
+				    (Metric **)repalloc(metrics, capacity * sizeof(Metric *));
+			}
+
+			/* Copy the metric to backend-local memory */
+			metrics[count] = (Metric *)palloc(sizeof(Metric));
+			memcpy(metrics[count], metric, sizeof(Metric));
+
+			/* Copy JSONB labels to backend-local memory if they exist in DSA */
+			if (metric->key.labels_location == LABELS_DSA &&
+			    metric->key.labels.dsa_ptr != InvalidDsaPointer) {
+				Jsonb *dsa_labels = (Jsonb *)dsa_get_address(
+				    local_dsa, metric->key.labels.dsa_ptr);
+				size_t jsonb_size = VARSIZE(dsa_labels);
+
+				labels_copy = (Jsonb *)palloc(jsonb_size);
+				memcpy(labels_copy, dsa_labels, jsonb_size);
+
+				/* Update the copied metric to point to local copy */
+				metrics[count]->key.labels.local_ptr = labels_copy;
+				metrics[count]->key.labels_location = LABELS_LOCAL;
+			}
+
+			count++;
+		}
+		dshash_seq_term(&status);
+
+		/* Store the materialized metrics and count */
+		funcctx->user_fctx = metrics;
+		funcctx->max_calls = count;
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+
+	funcctx = SRF_PERCALL_SETUP();
+	metrics = (Metric **)funcctx->user_fctx;
+	current_idx = funcctx->call_cntr;
+
+	if (current_idx < funcctx->max_calls) {
+		Metric *metric = metrics[current_idx];
+		Datum values[5];
+		bool nulls[5] = {false, false, false, false, false};
+		HeapTuple tuple;
+		Datum result;
+		const char *type_str;
+
+		/* Convert metric type enum to string */
+		switch (metric->key.type) {
+		case METRIC_TYPE_COUNTER:
+			type_str = "counter";
+			break;
+		case METRIC_TYPE_GAUGE:
+			type_str = "gauge";
+			break;
+		case METRIC_TYPE_HISTOGRAM:
+			type_str = "histogram";
+			break;
+		case METRIC_TYPE_HISTOGRAM_SUM:
+			type_str = "histogram_sum";
+			break;
+		default:
+			type_str = "unknown";
+			break;
+		}
+
+		values[0] = CStringGetTextDatum(metric->key.name);
+
+		if (metric->key.labels_location == LABELS_LOCAL &&
+		    metric->key.labels.local_ptr != NULL) {
+			values[1] = JsonbPGetDatum(metric->key.labels.local_ptr);
+		} else {
+			nulls[1] = true;
+		}
+
+		values[2] = CStringGetTextDatum(type_str);
+		values[3] = Int32GetDatum(metric->key.bucket);
+		values[4] = Int64GetDatum(metric->value);
+		tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
+		result = HeapTupleGetDatum(tuple);
+		SRF_RETURN_NEXT(funcctx, result);
+	} else {
+		/* All metrics returned */
+		SRF_RETURN_DONE(funcctx);
+	}
+}
+
+/*
+ * C API functions for other extensions to call
+ * These are marked with visibility("default") to be externally accessible
+ */
+
+__attribute__((visibility("default"))) int64
+pmetrics_increment_counter(const char *name_str, Jsonb *labels_jsonb)
+{
+	Datum result;
+
+	validate_inputs(name_str);
+	result = pmetrics_increment_by(name_str, labels_jsonb, METRIC_TYPE_COUNTER,
+	                               0, 1);
+	return DatumGetInt64(result);
+}
+
+__attribute__((visibility("default"))) int64
+pmetrics_increment_counter_by(const char *name_str, Jsonb *labels_jsonb,
+                               int64 amount)
+{
+	Datum result;
+
+	validate_inputs(name_str);
+
+	if (amount <= 0)
+		elog(ERROR, "increment must be greater than 0");
+
+	result = pmetrics_increment_by(name_str, labels_jsonb, METRIC_TYPE_COUNTER,
+	                               0, amount);
+	return DatumGetInt64(result);
+}
+
+__attribute__((visibility("default"))) int64
+pmetrics_set_gauge(const char *name_str, Jsonb *labels_jsonb, int64 value)
+{
+	Metric *entry;
+	MetricKey metric_key;
+	bool found;
+	dshash_table *table;
+	int64 result;
+
+	validate_inputs(name_str);
+
+	table = get_metrics_table();
+	if (table == NULL)
+		elog(ERROR, "pmetrics not initialized");
+
+	init_metric_key(&metric_key, name_str, labels_jsonb, METRIC_TYPE_GAUGE, 0);
+
+	entry = (Metric *)dshash_find_or_insert(table, &metric_key, &found);
+
+	entry->value = value;
+	result = entry->value;
+
+	dshash_release_lock(table, entry);
+
+	return result;
+}
+
+__attribute__((visibility("default"))) int64
+pmetrics_add_to_gauge(const char *name_str, Jsonb *labels_jsonb, int64 amount)
+{
+	Datum result;
+
+	validate_inputs(name_str);
+
+	if (amount == 0)
+		elog(ERROR, "value can't be 0");
+
+	result = pmetrics_increment_by(name_str, labels_jsonb, METRIC_TYPE_GAUGE, 0,
+	                               amount);
+	return DatumGetInt64(result);
+}
+
+__attribute__((visibility("default"))) Datum pmetrics_record_histogram(
+    const char *name_str, Jsonb *labels_jsonb, double value)
+{
+	Datum bucket_count;
+	int bucket;
+
+	validate_inputs(name_str);
+
+	bucket = pmetrics_bucket_for(value);
+
+	/* Increment the histogram bucket count */
+	bucket_count = pmetrics_increment_by(name_str, labels_jsonb,
+	                                     METRIC_TYPE_HISTOGRAM, bucket, 1);
+
+	/* Add to histogram sum (bucket is always 0 for sum type) */
+	pmetrics_increment_by(name_str, labels_jsonb, METRIC_TYPE_HISTOGRAM_SUM, 0,
+	                      (int64)value);
+
+	return bucket_count;
+}
+
+PG_FUNCTION_INFO_V1(record_to_histogram);
+Datum record_to_histogram(PG_FUNCTION_ARGS)
+{
+	Datum result;
+	text *name_text;
+	Jsonb *labels_jsonb;
+	char *name_str = NULL;
+	double value;
+
+	if (!pmetrics_enabled)
+		PG_RETURN_NULL();
+
+	PG_TRY();
+	{
+		name_text = PG_GETARG_TEXT_PP(0);
+		labels_jsonb = PG_GETARG_JSONB_P(1);
+		value = PG_GETARG_FLOAT8(2);
+		name_str = text_to_cstring(name_text);
+
+		result = pmetrics_record_histogram(name_str, labels_jsonb, value);
+	}
+	PG_CATCH();
+	{
+		if (name_str)
+			pfree(name_str);
+
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+
+	pfree(name_str);
+	return result;
+}
+
+PG_FUNCTION_INFO_V1(list_histogram_buckets);
+Datum list_histogram_buckets(PG_FUNCTION_ARGS)
+{
+	FuncCallContext *funcctx;
+	int *buckets;
+	int current_idx;
+
+	if (SRF_IS_FIRSTCALL()) {
+		MemoryContext oldcontext;
+		TupleDesc tupdesc;
+		int max_bucket_exp;
+		int num_buckets;
+		int i;
+		int count;
+
+		funcctx = SRF_FIRSTCALL_INIT();
+		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+		if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
+			ereport(ERROR,
+			        (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			         errmsg("function returning record called in context "
+			                "that cannot accept type record")));
 
 		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
 
 		max_bucket_exp = ceil(log(buckets_upper_bound) / log_gamma);
 		num_buckets = max_bucket_exp + 1;
 
-		buckets = (int *) palloc(num_buckets * sizeof(int));
+		buckets = (int *)palloc(num_buckets * sizeof(int));
 
 		/* Generate unique bucket values */
 		count = 0;
 		buckets[count++] = 0;
-		for (i = 1; i <= max_bucket_exp; i++)
-		{
+		for (i = 1; i <= max_bucket_exp; i++) {
 			int bucket_value = (int)pow(gamma_val, i);
 			if (bucket_value != buckets[count - 1])
 				buckets[count++] = bucket_value;
@@ -837,38 +951,55 @@ list_histogram_buckets(PG_FUNCTION_ARGS)
 	}
 
 	funcctx = SRF_PERCALL_SETUP();
-	buckets = (int *) funcctx->user_fctx;
+	buckets = (int *)funcctx->user_fctx;
 	current_idx = funcctx->call_cntr;
 
-	if (current_idx < funcctx->max_calls)
-	{
-		Datum		values[1];
-		bool		nulls[1] = {false};
-		HeapTuple	tuple;
-		Datum		result;
+	if (current_idx < funcctx->max_calls) {
+		Datum values[1];
+		bool nulls[1] = {false};
+		HeapTuple tuple;
+		Datum result;
 
 		values[0] = Int32GetDatum(buckets[current_idx]);
 
 		tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
 		result = HeapTupleGetDatum(tuple);
 		SRF_RETURN_NEXT(funcctx, result);
-	}
-	else
-	{
+	} else {
 		SRF_RETURN_DONE(funcctx);
 	}
 }
 
-__attribute__((visibility("default")))
-PMetricsSharedState *
+PG_FUNCTION_INFO_V1(clear_metrics);
+Datum clear_metrics(PG_FUNCTION_ARGS)
+{
+	dshash_table *metrics_table;
+	dshash_seq_status status;
+	Metric *entry;
+	int64 deleted_count = 0;
+
+	metrics_table = get_metrics_table();
+
+	dshash_seq_init(&status, metrics_table, true);
+	while ((entry = dshash_seq_next(&status)) != NULL) {
+		if (entry->key.labels_location == LABELS_DSA) {
+			dsa_free(local_dsa, entry->key.labels.dsa_ptr);
+		}
+		dshash_delete_current(&status);
+		deleted_count++;
+	}
+	dshash_seq_term(&status);
+
+	PG_RETURN_INT64(deleted_count);
+}
+
+__attribute__((visibility("default"))) PMetricsSharedState *
 pmetrics_get_shared_state(void)
 {
 	return shared_state;
 }
 
-__attribute__((visibility("default")))
-dsa_area *
-pmetrics_get_dsa(void)
+__attribute__((visibility("default"))) dsa_area *pmetrics_get_dsa(void)
 {
 	if (local_dsa == NULL)
 		get_metrics_table();
@@ -876,30 +1007,28 @@ pmetrics_get_dsa(void)
 	return local_dsa;
 }
 
-__attribute__((visibility("default")))
-bool
-pmetrics_is_enabled(void)
+__attribute__((visibility("default"))) bool pmetrics_is_enabled(void)
 {
 	return pmetrics_enabled;
 }
 
-__attribute__((visibility("default")))
-int pmetrics_bucket_for(double value) {
-  int bucket;
-  int this_bucket_upper_bound;
+static int pmetrics_bucket_for(double value)
+{
+	int bucket;
+	int this_bucket_upper_bound;
 
-  if (value < 1.0)
-    bucket = 0;
-  else
-    bucket = (int)fmax(ceil(log(value) / log_gamma), 0);
+	if (value < 1.0)
+		bucket = 0;
+	else
+		bucket = (int)fmax(ceil(log(value) / log_gamma), 0);
 
-  this_bucket_upper_bound = (int)pow(gamma_val, bucket);
+	this_bucket_upper_bound = (int)pow(gamma_val, bucket);
 
-  if (this_bucket_upper_bound > buckets_upper_bound) {
-    elog(NOTICE, "Histogram data truncated: value %f to %d", value,
-         buckets_upper_bound);
-    this_bucket_upper_bound = buckets_upper_bound;
-  }
+	if (this_bucket_upper_bound > buckets_upper_bound) {
+		elog(NOTICE, "Histogram data truncated: value %f to %d", value,
+		     buckets_upper_bound);
+		this_bucket_upper_bound = buckets_upper_bound;
+	}
 
-  return this_bucket_upper_bound;
+	return this_bucket_upper_bound;
 }

@@ -35,7 +35,10 @@ Add to `postgresql.conf`:
 
 ```ini
 shared_preload_libraries = 'pmetrics,pmetrics_stmts'
+compute_query_id = on
 ```
+
+**Note**: `compute_query_id` must be set to `on` for query tracking to work. The default `auto` setting won't generate query IDs (it only enables them if `pg_stat_statements` is loaded).
 
 Restart PostgreSQL, then create both extensions:
 

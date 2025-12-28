@@ -1,0 +1,6 @@
+# pmetrics_txn extension
+comment = 'Simple transaction tracking using pmetrics'
+default_version = '0.1'
+module_pathname = '$libdir/pmetrics_txn'
+relocatable = true
+requires = 'pmetrics'

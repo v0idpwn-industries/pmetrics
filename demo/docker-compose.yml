@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  postgres:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: pmetrics-demo-db
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: demo
+    ports:
+      - "5432:5432"
+    command: >
+      postgres
+      -c shared_preload_libraries=pmetrics,pmetrics_stmts
+      -c pmetrics.enabled=true
+      -c pmetrics_stmts.enabled=true
+      -c compute_query_id=on
+      -c max_connections=300
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pmetrics-demo-app
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/demo
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  exporter:
+    build:
+      context: ../prometheus_exporter
+      dockerfile: Dockerfile
+    container_name: pmetrics-demo-exporter
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/demo
+      PORT: 9187
+    ports:
+      - "9187:9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: pmetrics-demo-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    depends_on:
+      - exporter
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: pmetrics-demo-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana-provisioning:/etc/grafana/provisioning
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  prometheus-data:
+  grafana-data:

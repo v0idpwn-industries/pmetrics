@@ -1,30 +1,26 @@
 # pmetrics
 
-A metrics instrumentation toolkit for PostgreSQL. Provides counters, gauges, and histograms with JSONB labels, stored in PostgreSQL dynamic shared memory and queryable via SQL.
+pmetrics is a PostgreSQL extension that provides a metrics collection infrastructure for use by other PostgreSQL extensions. It implements counters, gauges, and histograms with JSONB labels, stored in dynamic shared memory and queryable via SQL.
 
 ## Components
 
 ### pmetrics (Core Extension)
 
-PostgreSQL extension providing metrics collection infrastructure with counters, gauges, and histograms. Metrics are stored in dynamic shared memory with no fixed limits and are queryable via SQL.
+Provides the metrics collection infrastructure with counters, gauges, and histograms. Extensions record metrics via the C API or PL/pgSQL functions can use the SQL API.
 
-**See**: [pmetrics/README.md](pmetrics/README.md)
+[Documentation](pmetrics/README.md)
 
 ### pmetrics_stmts (Query Tracking Extension)
 
-PostgreSQL extension for automatic query performance tracking. Records planning time, execution time, and rows returned as histograms. Serves as an alternative to `pg_stat_statements` with full distribution tracking.
+A pg_stat_statements alternative built on top of pmetrics. Tracks query performance metrics (planning time, execution time, rows returned) as histograms.
 
-**Requires**: `pmetrics` core extension.
-
-**See**: [pmetrics_stmts/README.md](pmetrics_stmts/README.md)
+[Documentation](pmetrics_stmts/README.md)
 
 ### pmetrics Prometheus Exporter
 
-Python service that queries PostgreSQL and exports metrics in Prometheus text exposition format via HTTP endpoint.
+Python service that queries PostgreSQL and exports metrics in Prometheus text exposition format.
 
-**Requires**: `pmetrics` extension (core); `pmetrics_stmts` optional.
-
-**See**: [prometheus_exporter/README.md](prometheus_exporter/README.md)
+[Documentation](prometheus_exporter/README.md)
 
 ## Installation
 
@@ -63,22 +59,15 @@ pip install -r requirements.txt
 DATABASE_URL=postgresql:///mydb python exporter.py
 ```
 
-## Quick Example
+## Example
 
-```sql
--- Record metrics
-SELECT increment_counter('requests', '{"method": "GET"}');
-SELECT record_to_histogram('latency_ms', '{"endpoint": "/api"}', 42.5);
-
--- Query metrics
-SELECT * FROM pmetrics.list_metrics();
-```
+The `examples/pmetrics_txn/` directory contains a minimal example extension demonstrating how to integrate with pmetrics. It tracks PostgreSQL transactions (commits and aborts).
 
 ## Requirements
 
-- PostgreSQL 12 or later
-- C compiler for extension building
-- Python 3.7+ for Prometheus exporter
+- PostgreSQL 17 or later
+- C compiler for building extensions
+- Python 3.7+ for Prometheus exporter (optional)
 
 ## License
 

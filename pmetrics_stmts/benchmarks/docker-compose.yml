@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  # Baseline PostgreSQL with no extensions
+  postgres-baseline:
+    image: postgres:17
+    container_name: pgbench-baseline
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: benchdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./init-baseline.sql:/docker-entrypoint-initdb.d/init.sql
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c max_connections=100
+      -c work_mem=4MB
+      -c compute_query_id=on
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL with pg_stat_statements
+  postgres-pgss:
+    image: postgres:17
+    container_name: pgbench-pgss
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: benchdb
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./init-pgss.sql:/docker-entrypoint-initdb.d/init.sql
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c shared_buffers=256MB
+      -c max_connections=100
+      -c work_mem=4MB
+      -c pg_stat_statements.track=all
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL with pmetrics and pmetrics_stmts
+  postgres-pmetrics:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: pgbench-pmetrics
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: benchdb
+    ports:
+      - "5434:5432"
+    volumes:
+      - ./init-pmetrics.sql:/docker-entrypoint-initdb.d/init.sql
+    command: >
+      postgres
+      -c shared_preload_libraries=pmetrics,pmetrics_stmts
+      -c shared_buffers=256MB
+      -c max_connections=100
+      -c work_mem=4MB
+      -c pmetrics.enabled=true
+      -c pmetrics_stmts.enabled=true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pg-baseline-data:
+  pg-pgss-data:
+  pg-pmetrics-data:
