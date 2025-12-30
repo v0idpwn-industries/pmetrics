@@ -177,9 +177,22 @@ PMetricsSharedState *pmetrics_get_shared_state(void);
 /* Get DSA area (for extensions sharing the same DSA) */
 dsa_area *pmetrics_get_dsa(void);
 
+/* Increment a counter by 1 */
+int64 pmetrics_increment_counter(const char *name_str, Jsonb *labels_jsonb);
+
+/* Increment a counter by a specific amount */
+int64 pmetrics_increment_counter_by(const char *name_str, Jsonb *labels_jsonb,
+                                     int64 amount);
+
+/* Set a gauge to a specific value */
+int64 pmetrics_set_gauge(const char *name_str, Jsonb *labels_jsonb, int64 value);
+
+/* Add to a gauge (can be positive or negative) */
+int64 pmetrics_add_to_gauge(const char *name_str, Jsonb *labels_jsonb, int64 amount);
+
 /* Record a histogram value (automatically creates bucket and sum entries) */
 Datum pmetrics_record_histogram(const char *name_str, Jsonb *labels_jsonb,
-                                double value);
+                                 double value);
 
 /* Check if metrics collection is enabled */
 bool pmetrics_is_enabled(void);
@@ -201,19 +214,29 @@ typedef enum MetricType {
 ```c
 #include "extension/pmetrics/pmetrics.h"
 
-void record_custom_metric(void)
+void record_custom_metrics(void)
 {
     Jsonb *labels;
 
     /* Build labels JSONB */
     labels = build_my_labels();
 
+    /* Increment a counter */
+    pmetrics_increment_counter("requests_total", labels);
+
+    /* Increment counter by specific amount */
+    pmetrics_increment_counter_by("bytes_sent", labels, 1024);
+
+    /* Set a gauge */
+    pmetrics_set_gauge("active_connections", labels, 42);
+
+    /* Add to a gauge */
+    pmetrics_add_to_gauge("queue_depth", labels, -1);
+
     /* Record histogram - automatically creates both bucket and sum entries */
     pmetrics_record_histogram("custom_latency", labels, 123.45);
 }
 ```
-
-**Note:** For recording counters and gauges, use the SQL functions via `SPI_execute()` or implement similar high-level wrappers. The C API currently focuses on histogram recording, which is the most common use case for extension authors.
 
 ## Limitations
 
