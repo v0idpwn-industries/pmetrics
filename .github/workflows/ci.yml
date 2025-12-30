@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        postgres: [14, 15, 16, 17]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL ${{ matrix.postgres }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-${{ matrix.postgres }} postgresql-server-dev-${{ matrix.postgres }}
+
+      - name: Set up PostgreSQL
+        run: |
+          sudo systemctl start postgresql
+          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
+          sudo -u postgres psql -c "CREATE DATABASE demo;"
+
+      - name: Configure PostgreSQL for pmetrics
+        run: |
+          # Add shared_preload_libraries to postgresql.conf
+          PG_CONF=$(sudo -u postgres psql -t -c "SHOW config_file;" | xargs)
+          echo "shared_preload_libraries = 'pmetrics,pmetrics_stmts'" | sudo tee -a "$PG_CONF"
+          echo "compute_query_id = on" | sudo tee -a "$PG_CONF"
+
+          # Restart PostgreSQL to load the extension
+          sudo systemctl restart postgresql
+
+          # Wait for PostgreSQL to be ready
+          for i in {1..30}; do
+            if sudo -u postgres psql -c "SELECT 1" >/dev/null 2>&1; then
+              echo "PostgreSQL is ready"
+              break
+            fi
+            echo "Waiting for PostgreSQL to be ready... ($i/30)"
+            sleep 1
+          done
+
+      - name: Build and install pmetrics
+        run: |
+          PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make clean
+          PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make
+          sudo PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make install
+        env:
+          USE_PGXS: 1
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.17'
+          otp-version: '27'
+
+      - name: Install Elixir dependencies
+        working-directory: ./test
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+
+      - name: Run Elixir tests
+        working-directory: ./test
+        run: mix test
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: demo
+
+  format:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.17'
+          otp-version: '27'
+
+      - name: Install Elixir dependencies for formatting
+        working-directory: ./test
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+
+      - name: Check formatting
+        run: |
+          make format
+          if ! git diff --exit-code; then
+            echo "Code is not formatted. Please run 'make format'"
+            exit 1
+          fi
