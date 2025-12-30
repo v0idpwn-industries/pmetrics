@@ -44,8 +44,11 @@ jobs:
 
       - name: Configure and start PostgreSQL
         run: |
+          # Initialize PostgreSQL cluster
+          sudo /usr/lib/postgresql/${{ matrix.postgres }}/bin/initdb -D /var/lib/postgresql/${{ matrix.postgres }}/main
+
           # Configure PostgreSQL
-          PG_CONF=$(sudo -u postgres /usr/lib/postgresql/${{ matrix.postgres }}/bin/postgres -C config_file)
+          PG_CONF=/var/lib/postgresql/${{ matrix.postgres }}/main/postgresql.conf
           echo "shared_preload_libraries = 'pmetrics,pmetrics_stmts'" | sudo tee -a "$PG_CONF"
           echo "compute_query_id = on" | sudo tee -a "$PG_CONF"
 
