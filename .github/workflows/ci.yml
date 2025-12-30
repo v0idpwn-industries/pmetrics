@@ -81,6 +81,10 @@ jobs:
           mix local.rebar --force
           mix deps.get
 
+      - name: Check PostgreSQL logs
+        run: |
+          sudo journalctl -u postgresql --no-pager
+
       - name: Run Elixir tests
         working-directory: ./test
         run: mix test
