@@ -44,16 +44,16 @@ jobs:
 
       - name: Configure and start PostgreSQL
         run: |
-          # Initialize PostgreSQL cluster
-          sudo /usr/lib/postgresql/${{ matrix.postgres }}/bin/initdb -D /var/lib/postgresql/${{ matrix.postgres }}/main
+          # Stop the auto-started PostgreSQL cluster to configure it
+          sudo systemctl stop postgresql@17-main
 
-          # Configure PostgreSQL
-          PG_CONF=/var/lib/postgresql/${{ matrix.postgres }}/main/postgresql.conf
+          # Configure PostgreSQL (PGC_POSTMASTER settings require restart)
+          PG_CONF=/etc/postgresql/${{ matrix.postgres }}/main/postgresql.conf
           echo "shared_preload_libraries = 'pmetrics,pmetrics_stmts'" | sudo tee -a "$PG_CONF"
           echo "compute_query_id = on" | sudo tee -a "$PG_CONF"
 
-          # Start PostgreSQL
-          sudo systemctl start postgresql
+          # Start PostgreSQL with version-specific service
+          sudo systemctl start postgresql@17-main
 
           # Wait for PostgreSQL to be ready
           for i in {1..30}; do
@@ -61,9 +61,18 @@ jobs:
               echo "PostgreSQL is ready"
               break
             fi
+            if [ $i -eq 30 ]; then
+              echo "ERROR: PostgreSQL failed to start after 30 seconds"
+              sudo journalctl -u postgresql@17-main --no-pager -n 50
+              exit 1
+            fi
             echo "Waiting for PostgreSQL to be ready... ($i/30)"
             sleep 1
           done
+
+          # Verify extensions are loaded
+          echo "Checking loaded extensions..."
+          sudo -u postgres psql -c "SHOW shared_preload_libraries;"
 
           # Set up database
           sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
@@ -81,10 +90,6 @@ jobs:
           mix local.hex --force
           mix local.rebar --force
           mix deps.get
-
-      - name: Check PostgreSQL logs
-        run: |
-          sudo journalctl -u postgresql --no-pager
 
       - name: Run Elixir tests
         working-directory: ./test
