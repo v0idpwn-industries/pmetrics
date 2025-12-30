@@ -32,21 +32,25 @@ jobs:
           # Install PostgreSQL
           sudo apt-get install -y postgresql-${{ matrix.postgres }} postgresql-server-dev-${{ matrix.postgres }}
 
-      - name: Set up PostgreSQL
+      - name: Build and install pmetrics
         run: |
-          sudo systemctl start postgresql
-          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
-          sudo -u postgres psql -c "CREATE DATABASE demo;"
+          PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make clean
+          PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make pmetrics.all
+          sudo PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make pmetrics.install
+          PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make pmetrics_stmts.all
+          sudo PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make pmetrics_stmts.install
+        env:
+          USE_PGXS: 1
 
-      - name: Configure PostgreSQL for pmetrics
+      - name: Configure and start PostgreSQL
         run: |
-          # Add shared_preload_libraries to postgresql.conf
-          PG_CONF=$(sudo -u postgres psql -t -c "SHOW config_file;" | xargs)
+          # Configure PostgreSQL
+          PG_CONF=$(sudo -u postgres /usr/lib/postgresql/${{ matrix.postgres }}/bin/postgres -C config_file)
           echo "shared_preload_libraries = 'pmetrics,pmetrics_stmts'" | sudo tee -a "$PG_CONF"
           echo "compute_query_id = on" | sudo tee -a "$PG_CONF"
 
-          # Restart PostgreSQL to load the extension
-          sudo systemctl restart postgresql
+          # Start PostgreSQL
+          sudo systemctl start postgresql
 
           # Wait for PostgreSQL to be ready
           for i in {1..30}; do
@@ -58,15 +62,9 @@ jobs:
             sleep 1
           done
 
-      - name: Build and install pmetrics
-        run: |
-          PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make clean
-          PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make pmetrics.all
-          sudo PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make pmetrics.install
-          PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make pmetrics_stmts.all
-          sudo PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make pmetrics_stmts.install
-        env:
-          USE_PGXS: 1
+          # Set up database
+          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
+          sudo -u postgres psql -c "CREATE DATABASE demo;"
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
