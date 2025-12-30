@@ -44,16 +44,16 @@ jobs:
 
       - name: Configure and start PostgreSQL
         run: |
-          # Stop the auto-started PostgreSQL cluster to configure it
-          sudo systemctl stop postgresql@17-main
+          # Create PostgreSQL cluster using Debian/Ubuntu tools
+          sudo pg_createcluster ${{ matrix.postgres }} main --start
 
           # Configure PostgreSQL (PGC_POSTMASTER settings require restart)
           PG_CONF=/etc/postgresql/${{ matrix.postgres }}/main/postgresql.conf
           echo "shared_preload_libraries = 'pmetrics,pmetrics_stmts'" | sudo tee -a "$PG_CONF"
           echo "compute_query_id = on" | sudo tee -a "$PG_CONF"
 
-          # Start PostgreSQL with version-specific service
-          sudo systemctl start postgresql@17-main
+          # Restart PostgreSQL to apply PGC_POSTMASTER settings
+          sudo systemctl restart postgresql@${{ matrix.postgres }}-main
 
           # Wait for PostgreSQL to be ready
           for i in {1..30}; do
