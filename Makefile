@@ -1,7 +1,7 @@
 # Top-level Makefile for pmetrics project
 # Builds both pmetrics and pmetrics_stmts extensions in order
 
-.PHONY: all clean install installcheck pmetrics pmetrics_stmts format
+.PHONY: all clean install installcheck pmetrics pmetrics_stmts format docs
 
 # Build and install pmetrics first (for pmetrics.h), then pmetrics_stmts
 all:
@@ -33,3 +33,6 @@ format:
 	@prometheus_exporter/venv/bin/pip install -q -r prometheus_exporter/requirements.txt
 	prometheus_exporter/venv/bin/python -m black demo/*.py prometheus_exporter/*.py
 	cd test && mix format
+
+docs:
+	doxygen Doxyfile

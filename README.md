@@ -8,7 +8,7 @@ pmetrics is a PostgreSQL extension that provides a metrics collection infrastruc
 
 Provides the metrics collection infrastructure with counters, gauges, and histograms. Extensions record metrics via the C API or PL/pgSQL functions can use the SQL API.
 
-[Documentation](pmetrics/README.md)
+[Documentation](https://v0idpwn.github.io/pmetrics/)
 
 ### pmetrics_stmts (Query Tracking Extension)
 
@@ -42,6 +42,7 @@ shared_preload_libraries = 'pmetrics'
 
 # Core metrics + query tracking
 shared_preload_libraries = 'pmetrics,pmetrics_stmts'
+compute_query_id = on  # Required for pmetrics_stmts query tracking
 ```
 
 Restart PostgreSQL and create extensions:

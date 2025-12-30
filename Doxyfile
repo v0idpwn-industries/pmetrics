@@ -1,0 +1,32 @@
+# Doxyfile for pmetrics
+
+# Project settings
+PROJECT_NAME           = "pmetrics"
+PROJECT_NUMBER         = "0.1"
+PROJECT_BRIEF          = "PostgreSQL metrics instrumentation extension"
+OUTPUT_DIRECTORY       = docs
+
+# Input settings
+INPUT                  = pmetrics pmetrics/README.md
+FILE_PATTERNS          = *.c *.h *.md
+RECURSIVE              = YES
+USE_MDFILE_AS_MAINPAGE = pmetrics/README.md
+EXAMPLE_PATH           = examples
+
+# C-specific settings
+OPTIMIZE_OUTPUT_FOR_C  = YES
+
+# Extract everything for comprehensive documentation
+EXTRACT_ALL            = YES
+EXTRACT_STATIC         = YES
+
+# HTML output only
+GENERATE_HTML          = YES
+HTML_OUTPUT            = html
+GENERATE_LATEX         = NO
+
+# Enable source browser
+SOURCE_BROWSER         = YES
+
+# Enable search
+SEARCHENGINE           = YES
