@@ -63,7 +63,10 @@ jobs:
             fi
             if [ $i -eq 30 ]; then
               echo "ERROR: PostgreSQL failed to start after 30 seconds"
+              echo "=== systemd logs ==="
               sudo journalctl -u postgresql@17-main --no-pager -n 50
+              echo "=== PostgreSQL error logs ==="
+              sudo tail -100 /var/log/postgresql/postgresql-17-main.log
               exit 1
             fi
             echo "Waiting for PostgreSQL to be ready... ($i/30)"
