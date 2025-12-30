@@ -61,8 +61,10 @@ jobs:
       - name: Build and install pmetrics
         run: |
           PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make clean
-          PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make
-          sudo -E PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make install
+          PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make pmetrics.all
+          sudo PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make pmetrics.install
+          PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make pmetrics_stmts.all
+          sudo PG_CONFIG=/usr/lib/postgresql/${{ matrix.postgres }}/bin/pg_config make pmetrics_stmts.install
         env:
           USE_PGXS: 1
 
