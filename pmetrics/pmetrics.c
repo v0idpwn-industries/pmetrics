@@ -791,9 +791,8 @@ pmetrics_increment_counter(const char *name_str, Jsonb *labels_jsonb)
 	return DatumGetInt64(result);
 }
 
-__attribute__((visibility("default"))) int64
-pmetrics_increment_counter_by(const char *name_str, Jsonb *labels_jsonb,
-                               int64 amount)
+__attribute__((visibility("default"))) int64 pmetrics_increment_counter_by(
+    const char *name_str, Jsonb *labels_jsonb, int64 amount)
 {
 	Datum result;
 

@@ -55,7 +55,7 @@ extern dsa_area *pmetrics_get_dsa(void);
  * @return New counter value after increment
  */
 extern int64 pmetrics_increment_counter(const char *name_str,
-                                         Jsonb *labels_jsonb);
+                                        Jsonb *labels_jsonb);
 
 /**
  * Increment a counter by a specific amount.
@@ -66,7 +66,7 @@ extern int64 pmetrics_increment_counter(const char *name_str,
  * @return New counter value after increment
  */
 extern int64 pmetrics_increment_counter_by(const char *name_str,
-                                            Jsonb *labels_jsonb, int64 amount);
+                                           Jsonb *labels_jsonb, int64 amount);
 
 /**
  * Set a gauge to a specific value.
@@ -77,7 +77,7 @@ extern int64 pmetrics_increment_counter_by(const char *name_str,
  * @return The value that was set
  */
 extern int64 pmetrics_set_gauge(const char *name_str, Jsonb *labels_jsonb,
-                                 int64 value);
+                                int64 value);
 
 /**
  * Add to a gauge (can be positive or negative).
@@ -88,7 +88,7 @@ extern int64 pmetrics_set_gauge(const char *name_str, Jsonb *labels_jsonb,
  * @return New gauge value after addition
  */
 extern int64 pmetrics_add_to_gauge(const char *name_str, Jsonb *labels_jsonb,
-                                    int64 amount);
+                                   int64 amount);
 
 /**
  * Record a value to a histogram.
