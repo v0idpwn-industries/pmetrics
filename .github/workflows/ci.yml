@@ -52,6 +52,7 @@ jobs:
           echo "shared_preload_libraries = 'pmetrics,pmetrics_stmts'" | sudo tee -a "$PG_CONF"
           echo "compute_query_id = on" | sudo tee -a "$PG_CONF"
           echo "port = 5433" | sudo tee -a "$PG_CONF"
+          echo "max_connections = 300" | sudo tee -a "$PG_CONF"
 
           # Restart PostgreSQL to apply PGC_POSTMASTER settings
           sudo systemctl restart postgresql@${{ matrix.postgres }}-main
