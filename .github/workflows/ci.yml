@@ -51,13 +51,14 @@ jobs:
           PG_CONF=/etc/postgresql/${{ matrix.postgres }}/main/postgresql.conf
           echo "shared_preload_libraries = 'pmetrics,pmetrics_stmts'" | sudo tee -a "$PG_CONF"
           echo "compute_query_id = on" | sudo tee -a "$PG_CONF"
+          echo "port = 5433" | sudo tee -a "$PG_CONF"
 
           # Restart PostgreSQL to apply PGC_POSTMASTER settings
           sudo systemctl restart postgresql@${{ matrix.postgres }}-main
 
           # Wait for PostgreSQL to be ready
           for i in {1..30}; do
-            if sudo -u postgres psql -c "SELECT 1" >/dev/null 2>&1; then
+            if sudo -u postgres psql -p 5433 -c "SELECT 1" >/dev/null 2>&1; then
               echo "PostgreSQL is ready"
               break
             fi
@@ -75,11 +76,11 @@ jobs:
 
           # Verify extensions are loaded
           echo "Checking loaded extensions..."
-          sudo -u postgres psql -c "SHOW shared_preload_libraries;"
+          sudo -u postgres psql -p 5433 -c "SHOW shared_preload_libraries;"
 
           # Set up database
-          sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
-          sudo -u postgres psql -c "CREATE DATABASE demo;"
+          sudo -u postgres psql -p 5433 -c "ALTER USER postgres PASSWORD 'postgres';"
+          sudo -u postgres psql -p 5433 -c "CREATE DATABASE demo;"
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -99,7 +100,7 @@ jobs:
         run: mix test
         env:
           PGHOST: localhost
-          PGPORT: 5432
+          PGPORT: 5433
           PGUSER: postgres
           PGPASSWORD: postgres
           PGDATABASE: demo
