@@ -253,6 +253,9 @@ static void init_metric_key(MetricKey *key, const char *name,
 static int pmetrics_bucket_for(double value);
 static Datum pmetrics_increment_by(const char *name_str, Jsonb *labels_jsonb,
                                    MetricType type, int bucket, int64 amount);
+static void extract_metric_args(FunctionCallInfo fcinfo, int name_arg,
+                                int labels_arg, char **name_out,
+                                Jsonb **labels_out);
 
 static void metrics_shmem_request(void)
 {
@@ -353,6 +356,22 @@ static void validate_inputs(const char *name)
 
 	if (strlen(name) >= NAMEDATALEN)
 		elog(ERROR, "name too long");
+}
+
+/*
+ * Extract name and labels from PG_FUNCTION_ARGS with proper error handling.
+ * Validates inputs and allocates name_str which must be freed by caller.
+ */
+static void extract_metric_args(FunctionCallInfo fcinfo, int name_arg,
+                                int labels_arg, char **name_out,
+                                Jsonb **labels_out)
+{
+	text *name_text;
+
+	name_text = PG_GETARG_TEXT_PP(name_arg);
+	*labels_out = PG_GETARG_JSONB_P(labels_arg);
+	*name_out = text_to_cstring(name_text);
+	validate_inputs(*name_out);
 }
 
 /*
@@ -483,20 +502,15 @@ PG_FUNCTION_INFO_V1(increment_counter);
 Datum increment_counter(PG_FUNCTION_ARGS)
 {
 	Datum new_value;
-	text *name_text;
 	Jsonb *labels_jsonb;
 	char *name_str = NULL;
 
 	if (!pmetrics_enabled)
 		PG_RETURN_NULL();
 
-	name_text = PG_GETARG_TEXT_PP(0);
-	labels_jsonb = PG_GETARG_JSONB_P(1);
-
 	PG_TRY();
 	{
-		name_str = text_to_cstring(name_text);
-		validate_inputs(name_str);
+		extract_metric_args(fcinfo, 0, 1, &name_str, &labels_jsonb);
 		new_value = pmetrics_increment_by(name_str, labels_jsonb,
 		                                  METRIC_TYPE_COUNTER, 0, 1);
 	}
@@ -516,7 +530,6 @@ PG_FUNCTION_INFO_V1(increment_counter_by);
 Datum increment_counter_by(PG_FUNCTION_ARGS)
 {
 	Datum new_value;
-	text *name_text;
 	Jsonb *labels_jsonb;
 	char *name_str = NULL;
 	int increment;
@@ -526,12 +539,8 @@ Datum increment_counter_by(PG_FUNCTION_ARGS)
 
 	PG_TRY();
 	{
-		name_text = PG_GETARG_TEXT_PP(0);
-		labels_jsonb = PG_GETARG_JSONB_P(1);
+		extract_metric_args(fcinfo, 0, 1, &name_str, &labels_jsonb);
 		increment = PG_GETARG_INT32(2);
-		name_str = text_to_cstring(name_text);
-
-		validate_inputs(name_str);
 
 		if (increment <= 0)
 			elog(ERROR, "increment must be greater than 0");
@@ -557,7 +566,6 @@ Datum set_gauge(PG_FUNCTION_ARGS)
 	Metric *entry;
 	MetricKey metric_key;
 	bool found;
-	text *name_text;
 	Jsonb *labels_jsonb;
 	char *name_str = NULL;
 	int64 new_value;
@@ -569,16 +577,12 @@ Datum set_gauge(PG_FUNCTION_ARGS)
 
 	PG_TRY();
 	{
-		name_text = PG_GETARG_TEXT_PP(0);
-		labels_jsonb = PG_GETARG_JSONB_P(1);
+		extract_metric_args(fcinfo, 0, 1, &name_str, &labels_jsonb);
 		new_value = PG_GETARG_INT64(2);
-		name_str = text_to_cstring(name_text);
 
 		table = get_metrics_table();
 		if (table == NULL)
 			elog(ERROR, "pmetrics not initialized");
-
-		validate_inputs(name_str);
 
 		init_metric_key(&metric_key, name_str, labels_jsonb, METRIC_TYPE_GAUGE,
 		                0);
@@ -609,7 +613,6 @@ PG_FUNCTION_INFO_V1(add_to_gauge);
 Datum add_to_gauge(PG_FUNCTION_ARGS)
 {
 	Datum new_value;
-	text *name_text;
 	Jsonb *labels_jsonb;
 	char *name_str = NULL;
 	int increment;
@@ -619,15 +622,11 @@ Datum add_to_gauge(PG_FUNCTION_ARGS)
 
 	PG_TRY();
 	{
-		name_text = PG_GETARG_TEXT_PP(0);
-		labels_jsonb = PG_GETARG_JSONB_P(1);
+		extract_metric_args(fcinfo, 0, 1, &name_str, &labels_jsonb);
 		increment = PG_GETARG_INT32(2);
-		name_str = text_to_cstring(name_text);
 
 		if (increment == 0)
 			elog(ERROR, "value can't be 0");
-
-		validate_inputs(name_str);
 
 		new_value = pmetrics_increment_by(name_str, labels_jsonb,
 		                                  METRIC_TYPE_GAUGE, 0, increment);
@@ -873,7 +872,6 @@ PG_FUNCTION_INFO_V1(record_to_histogram);
 Datum record_to_histogram(PG_FUNCTION_ARGS)
 {
 	Datum result;
-	text *name_text;
 	Jsonb *labels_jsonb;
 	char *name_str = NULL;
 	double value;
@@ -883,10 +881,8 @@ Datum record_to_histogram(PG_FUNCTION_ARGS)
 
 	PG_TRY();
 	{
-		name_text = PG_GETARG_TEXT_PP(0);
-		labels_jsonb = PG_GETARG_JSONB_P(1);
+		extract_metric_args(fcinfo, 0, 1, &name_str, &labels_jsonb);
 		value = PG_GETARG_FLOAT8(2);
-		name_str = text_to_cstring(name_text);
 
 		result = pmetrics_record_histogram(name_str, labels_jsonb, value);
 	}
