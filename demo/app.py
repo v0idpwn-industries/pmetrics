@@ -127,13 +127,13 @@ def worker_fluctuating():
         try:
             # Calculate sinusoidal sleep duration
             # Period: 5 minutes (one full cycle per 5 minutes)
-            # Range: 5ms to 500ms
+            # Range: 50ms to 500ms
             elapsed = time.time() - start_time
             phase = (elapsed % 300) / 300 * 2 * math.pi  # 300 seconds = 5 minutes
             sin_value = math.sin(phase)  # -1 to 1
 
-            # Map sin_value from [-1, 1] to [0.005, 0.500] (5ms to 500ms)
-            sleep_duration = 0.005 + (sin_value + 1) / 2 * 0.495
+            # Map sin_value from [-1, 1] to [0.050, 0.500] (50ms to 500ms)
+            sleep_duration = 0.275 + sin_value * 0.225
 
             with get_db_connection() as conn:
                 conn.autocommit = True

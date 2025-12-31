@@ -23,11 +23,13 @@ The `pmetrics` extension must be built and installed first:
 ```bash
 # From repository root
 PG_CONFIG=/path/to/pg_config make clean
-PG_CONFIG=/path/to/pg_config make
-PG_CONFIG=/path/to/pg_config make install
+PG_CONFIG=/path/to/pg_config make pmetrics.all
+PG_CONFIG=/path/to/pg_config make pmetrics.install
+PG_CONFIG=/path/to/pg_config make pmetrics_stmts.all
+PG_CONFIG=/path/to/pg_config make pmetrics_stmts.install
 ```
 
-This builds both `pmetrics` and `pmetrics_stmts`.
+This builds and installs both `pmetrics` and `pmetrics_stmts` in the correct order.
 
 ### Configuration
 

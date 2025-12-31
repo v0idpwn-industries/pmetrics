@@ -30,8 +30,10 @@ Build and install both extensions:
 
 ```bash
 PG_CONFIG=/path/to/pg_config make clean
-PG_CONFIG=/path/to/pg_config make
-PG_CONFIG=/path/to/pg_config make install
+PG_CONFIG=/path/to/pg_config make pmetrics.all
+PG_CONFIG=/path/to/pg_config make pmetrics.install
+PG_CONFIG=/path/to/pg_config make pmetrics_stmts.all
+PG_CONFIG=/path/to/pg_config make pmetrics_stmts.install
 ```
 
 Add to `postgresql.conf`:

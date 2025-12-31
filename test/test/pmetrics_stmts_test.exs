@@ -132,7 +132,7 @@ defmodule PmetricsStmtsTest do
 
   describe "query text storage" do
     test "list_queries returns query text" do
-      query("SELECT 999 AS unique_marker")
+      query("WITH unique_marker AS (SELECT 1) SELECT * FROM unique_marker")
 
       result = query("SELECT queryid, query_text FROM pmetrics_stmts.list_queries()")
 
