@@ -25,12 +25,7 @@ defmodule PmetricsTest do
       query("SELECT pmetrics.increment_counter_by('batch_counter', '{}'::jsonb, 10)")
       query("SELECT pmetrics.increment_counter_by('batch_counter', '{}'::jsonb, 5)")
 
-      result =
-        query(
-          "SELECT value FROM pmetrics.list_metrics() WHERE name = 'batch_counter' AND type = 'counter'"
-        )
-
-      assert [[15]] = result.rows
+      assert 15 = get_metric_value("batch_counter", "counter")
     end
 
     test "counters with different labels are independent" do
@@ -38,41 +33,18 @@ defmodule PmetricsTest do
       query("SELECT pmetrics.increment_counter('http_requests', '{\"status\": 200}'::jsonb)")
       query("SELECT pmetrics.increment_counter('http_requests', '{\"status\": 404}'::jsonb)")
 
-      result =
-        query(
-          "SELECT value FROM pmetrics.list_metrics() WHERE name = 'http_requests' AND labels = '{\"status\": 200}'::jsonb"
-        )
-
-      assert [[2]] = result.rows
-
-      result =
-        query(
-          "SELECT value FROM pmetrics.list_metrics() WHERE name = 'http_requests' AND labels = '{\"status\": 404}'::jsonb"
-        )
-
-      assert [[1]] = result.rows
+      assert 2 = get_metric_value("http_requests", "counter", %{"status" => 200})
+      assert 1 = get_metric_value("http_requests", "counter", %{"status" => 404})
     end
   end
 
   describe "gauges" do
     test "set_gauge sets exact value" do
       query("SELECT pmetrics.set_gauge('temperature', '{}'::jsonb, 72)")
-
-      result =
-        query(
-          "SELECT value FROM pmetrics.list_metrics() WHERE name = 'temperature' AND type = 'gauge'"
-        )
-
-      assert [[72]] = result.rows
+      assert 72 = get_metric_value("temperature", "gauge")
 
       query("SELECT pmetrics.set_gauge('temperature', '{}'::jsonb, 68)")
-
-      result =
-        query(
-          "SELECT value FROM pmetrics.list_metrics() WHERE name = 'temperature' AND type = 'gauge'"
-        )
-
-      assert [[68]] = result.rows
+      assert 68 = get_metric_value("temperature", "gauge")
     end
 
     test "add_to_gauge modifies existing value" do
@@ -80,46 +52,22 @@ defmodule PmetricsTest do
       query("SELECT pmetrics.add_to_gauge('balance', '{}'::jsonb, 50)")
       query("SELECT pmetrics.add_to_gauge('balance', '{}'::jsonb, -25)")
 
-      result =
-        query(
-          "SELECT value FROM pmetrics.list_metrics() WHERE name = 'balance' AND type = 'gauge'"
-        )
-
-      assert [[125]] = result.rows
+      assert 125 = get_metric_value("balance", "gauge")
     end
 
     test "gauges with labels are independent" do
       query("SELECT pmetrics.set_gauge('memory_usage', '{\"host\": \"server1\"}'::jsonb, 1024)")
       query("SELECT pmetrics.set_gauge('memory_usage', '{\"host\": \"server2\"}'::jsonb, 2048)")
 
-      result =
-        query(
-          "SELECT value FROM pmetrics.list_metrics() WHERE name = 'memory_usage' AND labels = '{\"host\": \"server1\"}'::jsonb"
-        )
-
-      assert [[1024]] = result.rows
-
-      result =
-        query(
-          "SELECT value FROM pmetrics.list_metrics() WHERE name = 'memory_usage' AND labels = '{\"host\": \"server2\"}'::jsonb"
-        )
-
-      assert [[2048]] = result.rows
+      assert 1024 = get_metric_value("memory_usage", "gauge", %{"host" => "server1"})
+      assert 2048 = get_metric_value("memory_usage", "gauge", %{"host" => "server2"})
     end
   end
 
   describe "histograms" do
     test "record_to_histogram creates bucket entries" do
       query("SELECT pmetrics.record_to_histogram('response_time', '{}'::jsonb, 150.5)")
-
-      result =
-        query(
-          "SELECT bucket FROM pmetrics.list_metrics() WHERE name = 'response_time' AND type = 'histogram'"
-        )
-
-      assert length(result.rows) == 1
-      [[bucket]] = result.rows
-      assert is_integer(bucket)
+      [%{bucket: 150, value: 1}] = list_metrics("response_time", "histogram")
     end
 
     test "histogram_sum tracks total values" do
@@ -127,12 +75,7 @@ defmodule PmetricsTest do
       query("SELECT pmetrics.record_to_histogram('latency', '{}'::jsonb, 200.0)")
       query("SELECT pmetrics.record_to_histogram('latency', '{}'::jsonb, 50.0)")
 
-      result =
-        query(
-          "SELECT value FROM pmetrics.list_metrics() WHERE name = 'latency' AND type = 'histogram_sum'"
-        )
-
-      assert [[350]] = result.rows
+      assert 350 = get_histogram_sum("latency")
     end
 
     test "multiple values in same bucket increment count" do
@@ -140,18 +83,7 @@ defmodule PmetricsTest do
       query("SELECT pmetrics.record_to_histogram('request_time', '{}'::jsonb, 100.0)")
       query("SELECT pmetrics.record_to_histogram('request_time', '{}'::jsonb, 100.0)")
 
-      result =
-        query("""
-          SELECT bucket, value
-          FROM pmetrics.list_metrics()
-          WHERE name = 'request_time' AND type = 'histogram'
-          ORDER BY bucket
-        """)
-
-      assert length(result.rows) >= 1
-      [row | _] = result.rows
-      [_bucket, count] = row
-      assert count == 3
+      [%{bucket: 101, value: 3}] = list_metrics("request_time", "histogram")
     end
 
     test "histograms with labels are independent" do
@@ -163,19 +95,8 @@ defmodule PmetricsTest do
         "SELECT pmetrics.record_to_histogram('api_latency', '{\"endpoint\": \"/posts\"}'::jsonb, 150.0)"
       )
 
-      result =
-        query(
-          "SELECT value FROM pmetrics.list_metrics() WHERE name = 'api_latency' AND type = 'histogram_sum' AND labels = '{\"endpoint\": \"/users\"}'::jsonb"
-        )
-
-      assert [[50]] = result.rows
-
-      result =
-        query(
-          "SELECT value FROM pmetrics.list_metrics() WHERE name = 'api_latency' AND type = 'histogram_sum' AND labels = '{\"endpoint\": \"/posts\"}'::jsonb"
-        )
-
-      assert [[150]] = result.rows
+      assert 50 = get_histogram_sum("api_latency", %{"endpoint" => "/users"})
+      assert 150 = get_histogram_sum("api_latency", %{"endpoint" => "/posts"})
     end
   end
 
@@ -211,19 +132,16 @@ defmodule PmetricsTest do
     test "returns all metric fields" do
       query("SELECT pmetrics.increment_counter('full_metric', '{\"label\": \"value\"}'::jsonb)")
 
-      result =
-        query("""
-          SELECT name, labels, type, bucket, value
-          FROM pmetrics.list_metrics()
-          WHERE name = 'full_metric'
-        """)
-
-      assert [[name, labels, type, bucket, value]] = result.rows
-      assert name == "full_metric"
-      assert labels == %{"label" => "value"}
-      assert type == "counter"
-      assert bucket == 0
-      assert value == 1
+      [
+        %{
+          name: "full_metric",
+          labels: %{"label" => "value"},
+          type: "counter",
+          bucket: 0,
+          value: 1
+        }
+      ] =
+        list_metrics("full_metric", "counter")
     end
 
     test "filters by specific criteria" do
@@ -231,14 +149,7 @@ defmodule PmetricsTest do
       query("SELECT pmetrics.increment_counter('filter_test', '{\"env\": \"dev\"}'::jsonb)")
       query("SELECT pmetrics.set_gauge('other_metric', '{}'::jsonb, 50)")
 
-      result =
-        query("""
-          SELECT COUNT(*)
-          FROM pmetrics.list_metrics()
-          WHERE name = 'filter_test'
-        """)
-
-      assert [[2]] = result.rows
+      assert 2 = count_metrics("filter_test", "counter")
     end
   end
 
@@ -246,8 +157,7 @@ defmodule PmetricsTest do
     test "metrics are recorded when enabled" do
       query("SELECT pmetrics.increment_counter('enabled_test', '{}'::jsonb)")
 
-      result = query("SELECT value FROM pmetrics.list_metrics() WHERE name = 'enabled_test'")
-      assert [[1]] = result.rows
+      assert 1 = get_metric_value("enabled_test", "counter")
     end
   end
 

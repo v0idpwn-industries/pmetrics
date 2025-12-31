@@ -17,43 +17,19 @@ defmodule PmetricsStmtsTest do
     test "tracks query execution time" do
       query("SELECT 1")
 
-      result =
-        query("""
-          SELECT COUNT(*)
-          FROM pmetrics.list_metrics()
-          WHERE name = 'query_execution_time_ms' AND type = 'histogram'
-        """)
-
-      [[count]] = result.rows
-      assert count > 0
+      assert count_metrics("query_execution_time_ms", "histogram") > 0
     end
 
     test "tracks query planning time" do
       query("SELECT 1, 2, 3")
 
-      result =
-        query("""
-          SELECT COUNT(*)
-          FROM pmetrics.list_metrics()
-          WHERE name = 'query_planning_time_ms' AND type = 'histogram'
-        """)
-
-      [[count]] = result.rows
-      assert count > 0
+      assert count_metrics("query_planning_time_ms", "histogram") > 0
     end
 
     test "tracks rows returned" do
       query("SELECT generate_series(1, 10)")
 
-      result =
-        query("""
-          SELECT COUNT(*)
-          FROM pmetrics.list_metrics()
-          WHERE name = 'query_rows_returned' AND type = 'histogram'
-        """)
-
-      [[count]] = result.rows
-      assert count > 0
+      assert count_metrics("query_rows_returned", "histogram") > 0
     end
 
     test "creates histogram_sum entries for all metric types" do
@@ -80,53 +56,28 @@ defmodule PmetricsStmtsTest do
     test "metrics include queryid in labels" do
       query("SELECT 123 AS test_value")
 
-      result =
-        query("""
-          SELECT labels
-          FROM pmetrics.list_metrics()
-          WHERE name = 'query_execution_time_ms'
-          AND type = 'histogram'
-          LIMIT 1
-        """)
+      assert [%{labels: %{"queryid" => qid}} | _] =
+               list_metrics("query_execution_time_ms", "histogram")
 
-      [[labels]] = result.rows
-      assert is_map(labels)
-      assert Map.has_key?(labels, "queryid")
-      assert is_integer(labels["queryid"])
+      assert is_integer(qid)
     end
 
     test "metrics include userid in labels" do
       query("SELECT 'user_test'")
 
-      result =
-        query("""
-          SELECT labels
-          FROM pmetrics.list_metrics()
-          WHERE name = 'query_execution_time_ms'
-          AND type = 'histogram'
-          LIMIT 1
-        """)
+      assert [%{labels: %{"userid" => uid}} | _] =
+               list_metrics("query_execution_time_ms", "histogram")
 
-      [[labels]] = result.rows
-      assert Map.has_key?(labels, "userid")
-      assert is_integer(labels["userid"])
+      assert is_integer(uid)
     end
 
     test "metrics include dbid in labels" do
       query("SELECT 'db_test'")
 
-      result =
-        query("""
-          SELECT labels
-          FROM pmetrics.list_metrics()
-          WHERE name = 'query_execution_time_ms'
-          AND type = 'histogram'
-          LIMIT 1
-        """)
+      assert [%{labels: %{"dbid" => dbid}} | _] =
+               list_metrics("query_execution_time_ms", "histogram")
 
-      [[labels]] = result.rows
-      assert Map.has_key?(labels, "dbid")
-      assert is_integer(labels["dbid"])
+      assert is_integer(dbid)
     end
   end
 
@@ -249,15 +200,7 @@ defmodule PmetricsStmtsTest do
     test "SELECT queries are tracked" do
       query("SELECT 1, 2, 3")
 
-      result =
-        query("""
-          SELECT COUNT(*)
-          FROM pmetrics.list_metrics()
-          WHERE name = 'query_execution_time_ms'
-        """)
-
-      [[count]] = result.rows
-      assert count > 0
+      assert count_metrics("query_execution_time_ms", "histogram") > 0
     end
 
     test "INSERT queries are tracked" do
