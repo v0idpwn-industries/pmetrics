@@ -8,7 +8,7 @@ pmetrics is a PostgreSQL extension that provides a metrics collection infrastruc
 
 Provides the metrics collection infrastructure with counters, gauges, and histograms. Extensions record metrics via the C API or PL/pgSQL functions can use the SQL API.
 
-[Documentation](https://v0idpwn.github.io/pmetrics/)
+[Documentation](https://v0idpwn-industries.github.io/pmetrics/)
 
 ### pmetrics_stmts (Query Tracking Extension)
 
