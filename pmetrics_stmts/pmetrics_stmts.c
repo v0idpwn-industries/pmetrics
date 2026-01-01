@@ -6,8 +6,7 @@
  *
  * Requires pmetrics to be loaded first via shared_preload_libraries.
  *
- * Query normalization code (replacing constants with placeholders) is adapted
- * from PostgreSQL's contrib/pg_stat_statements extension.
+ * Most of this code is derived from PostgreSQL's contrib/pg_stat_statements.
  * Copyright (c) 2008-2025, PostgreSQL Global Development Group
  */
 
@@ -70,8 +69,10 @@ static int nesting_level = 0;
 
 /* Configs */
 #define DEFAULT_ENABLED true
+#define DEFAULT_TRACK_BUFFERS false
 
 static bool pmetrics_stmts_enabled = DEFAULT_ENABLED;
+static bool pmetrics_stmts_track_buffers = DEFAULT_TRACK_BUFFERS;
 
 /* Query text storage structures */
 typedef struct {
@@ -208,6 +209,11 @@ void _PG_init(void)
 	                         "Enable query performance tracking", NULL,
 	                         &pmetrics_stmts_enabled, DEFAULT_ENABLED,
 	                         PGC_SIGHUP, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+	    "pmetrics_stmts.track_buffers", "Track buffer usage distributions",
+	    NULL, &pmetrics_stmts_track_buffers, DEFAULT_TRACK_BUFFERS, PGC_SIGHUP,
+	    0, NULL, NULL, NULL);
 
 	MarkGUCPrefixReserved("pmetrics_stmts");
 
@@ -510,7 +516,8 @@ static void pmetrics_stmts_ExecutorStart_hook(QueryDesc *queryDesc, int eflags)
 }
 
 /*
- * ExecutorEnd hook: collect execution metrics (time and row count).
+ * ExecutorEnd hook: collect execution metrics (time, row count, and optionally
+ * buffer usage).
  */
 static void pmetrics_stmts_ExecutorEnd_hook(QueryDesc *queryDesc)
 {
@@ -536,6 +543,19 @@ static void pmetrics_stmts_ExecutorEnd_hook(QueryDesc *queryDesc)
 		snprintf(metric_name, NAMEDATALEN, "query_rows_returned");
 		pmetrics_record_histogram(metric_name, labels_jsonb,
 		                          (double)rows_processed);
+
+		/* Track buffer usage if enabled */
+		if (pmetrics_stmts_track_buffers) {
+			BufferUsage *bufusage = &queryDesc->totaltime->bufusage;
+
+			snprintf(metric_name, NAMEDATALEN, "query_shared_blocks_hit");
+			pmetrics_record_histogram(metric_name, labels_jsonb,
+			                          (double)bufusage->shared_blks_hit);
+
+			snprintf(metric_name, NAMEDATALEN, "query_shared_blocks_read");
+			pmetrics_record_histogram(metric_name, labels_jsonb,
+			                          (double)bufusage->shared_blks_read);
+		}
 	}
 
 	if (prev_ExecutorEnd_hook)

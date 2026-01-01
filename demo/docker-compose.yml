@@ -16,6 +16,7 @@ services:
       -c shared_preload_libraries=pmetrics,pmetrics_stmts
       -c pmetrics.enabled=true
       -c pmetrics_stmts.enabled=true
+      -c pmetrics_stmts.track_buffers=true
       -c compute_query_id=on
       -c max_connections=300
     healthcheck:
