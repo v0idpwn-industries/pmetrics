@@ -339,7 +339,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(query_execution_time_ms_bucket[1m])) by (le)",
+          "expr": "sum(round(increase(query_execution_time_ms_bucket[$__rate_interval]))) by (le)",
           "format": "heatmap",
           "legendFormat": "{{le}}",
           "refId": "A"
@@ -864,7 +864,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(query_rows_returned_bucket[1m])) by (le)",
+          "expr": "sum(round(increase(query_rows_returned_bucket[$__rate_interval]))) by (le)",
           "format": "heatmap",
           "legendFormat": "{{le}}",
           "refId": "A"
@@ -1064,7 +1064,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(query_shared_blocks_hit_bucket[1m])) by (le)",
+          "expr": "sum(round(increase(query_shared_blocks_hit_bucket[$__rate_interval]))) by (le)",
           "format": "heatmap",
           "legendFormat": "{{le}}",
           "refId": "A"
@@ -1139,7 +1139,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(query_shared_blocks_read_bucket[1m])) by (le)",
+          "expr": "sum(round(increase(query_shared_blocks_read_bucket[$__rate_interval]))) by (le)",
           "format": "heatmap",
           "legendFormat": "{{le}}",
           "refId": "A"
@@ -1201,7 +1201,7 @@
               }
             ]
           },
-          "unit": "short"
+          "unit": "ops"
         }
       },
       "gridPos": {
@@ -1231,9 +1231,9 @@
           "refId": "A"
         }
       ],
-      "title": "Disk Reads per Query (per minute)",
+      "title": "Disk Reads Rate per Query (blocks/sec)",
       "type": "timeseries",
-      "description": "Rate of disk block reads per query per minute (identifies I/O-heavy queries)"
+      "description": "Rate of disk block reads per query per second (identifies I/O-heavy queries)"
     }
   ],
   "refresh": "5s",
