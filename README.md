@@ -18,7 +18,7 @@ flowchart LR
     E -->|C API| C
     S -->|metrics| C
 
-    C e1@--> X
+    X e1@-->|pulls| C
     e1@{ animation: fast }
 
     style C fill:#336791,stroke:#2c5985,stroke-width:3px,color:#fff
