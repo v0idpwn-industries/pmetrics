@@ -3,27 +3,32 @@
 pmetrics is a PostgreSQL extension that provides a metrics collection infrastructure for use by other PostgreSQL extensions. It implements counters, gauges, and histograms with JSONB labels, stored in dynamic shared memory and queryable via SQL.
 
 ```mermaid
-graph LR
-    Q[Queries]
-    P[PL/pgSQL]
-    E[Extensions]
-    X[pmetrics Prometheus exporter]
+flowchart TB
+    Q[fa:fa-database SQL Queries]
+    P[fa:fa-code PL/pgSQL]
+    E[fa:fa-puzzle-piece Extensions]
 
-    Q -->|hooks| S[pmetrics_stmts]
-    P -->|SQL API| C[pmetrics]
+    S[fa:fa-chart-line pmetrics_stmts<br/>Query Performance]
+    C[fa:fa-server pmetrics<br/>Metrics Store]
+
+    X[fa:fa-upload Prometheus Exporter]
+    M[fa:fa-chart-bar Observability Stack]
+
+    Q -->|hooks| S
+    P -->|SQL API| C
     E -->|C API| C
-    S --> C
+    S -->|metrics| C
 
-    C <-->|queries| X
-    X --> M[Your observability stack]
+    C -->|queries| X
+    X -->|export| M
 
-    style C fill:#336791,stroke:#2c5985,stroke-width:2px,color:#fff
-    style S fill:#5d8fc4,stroke:#4a7399,stroke-width:2px,color:#fff
-    style X fill:#4CAF50,stroke:#45a049,stroke-width:2px,color:#fff
-    style M fill:#f9f9f9,stroke:#666,stroke-width:2px,color:#333
-    style Q fill:#fff,stroke:#999,stroke-width:2px,color:#333
-    style P fill:#fff,stroke:#999,stroke-width:2px,color:#333
-    style E fill:#fff,stroke:#999,stroke-width:2px,color:#333
+    style C fill:#336791,stroke:#2c5985,stroke-width:3px,color:#fff
+    style S fill:#4a7399,stroke:#336791,stroke-width:2px,color:#fff
+    style X fill:#5d8fc4,stroke:#4a7399,stroke-width:2px,color:#fff
+    style M fill:#6c8ebf,stroke:#5d8fc4,stroke-width:2px,color:#fff
+    style Q fill:none,stroke:#8d99ae,stroke-width:1px,color:#2b2d42,stroke-dasharray: 5 5
+    style P fill:none,stroke:#8d99ae,stroke-width:1px,color:#2b2d42,stroke-dasharray: 5 5
+    style E fill:none,stroke:#8d99ae,stroke-width:1px,color:#2b2d42,stroke-dasharray: 5 5
 ```
 
 ## Components
