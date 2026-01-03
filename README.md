@@ -13,13 +13,13 @@ graph TB
     end
 
     subgraph "pmetrics Ecosystem"
-        STMTS[pmetrics_stmts<br/><small>Auto-tracks query performance</small>]
-        CORE[pmetrics<br/><small>Counters, Gauges, Histograms</small>]
-        DSM[Dynamic Shared Memory<br/><small>dshash • JSONB labels</small>]
+        STMTS[pmetrics_stmts<br/>Auto-tracks query performance]
+        CORE[pmetrics<br/>Counters, Gauges, Histograms]
+        DSM[Dynamic Shared Memory<br/>dshash + JSONB labels]
     end
 
     subgraph "Monitoring"
-        EXP[Prometheus Exporter<br/><small>Queries list_metrics()</small>]
+        EXP[Prometheus Exporter<br/>Queries list_metrics]
         PROM[Prometheus]
         GRAF[Grafana]
     end
