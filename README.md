@@ -3,27 +3,26 @@
 pmetrics is a PostgreSQL extension that provides a metrics collection infrastructure for use by other PostgreSQL extensions. It implements counters, gauges, and histograms with JSONB labels, stored in dynamic shared memory and queryable via SQL.
 
 ```mermaid
-%%{init: {'theme':'base', 'themeVariables': { 'primaryColor':'#336791','primaryTextColor':'#fff','primaryBorderColor':'#000','lineColor':'#666','secondaryColor':'#4CAF50','tertiaryColor':'#f5f5f5'}}}%%
 graph LR
-    Q((Queries))
-    P((PL/pgSQL))
-    E((Extensions))
+    Q[Your Queries]
+    P[Your PL/pgSQL]
+    E[Your Extensions]
 
-    Q --> S[pmetrics_stmts]
-    P --> C[pmetrics]
-    E --> C
-    S --> C
+    Q -->|automatic| S[pmetrics_stmts]
+    P -->|SQL API| C[pmetrics]
+    E -->|C API| C
+    S -->|records to| C
 
-    C ==> X([Prometheus Exporter])
-    X ==> M[/Prometheus • Grafana\]
+    C -->|list_metrics| X[pmetrics exporter]
+    X --> M[Prometheus/Grafana]
 
-    style C fill:#336791,stroke:#1a3a52,stroke-width:3px,color:#fff
-    style S fill:#5a7fa3,stroke:#1a3a52,stroke-width:2px,color:#fff
-    style X fill:#4CAF50,stroke:#2d7a35,stroke-width:3px,color:#fff
-    style M fill:#f5f5f5,stroke:#999,stroke-width:2px
-    style Q fill:#e8eef3,stroke:#336791,stroke-width:2px
-    style P fill:#e8eef3,stroke:#336791,stroke-width:2px
-    style E fill:#e8eef3,stroke:#336791,stroke-width:2px
+    style C fill:#336791,stroke:#2c5985,stroke-width:2px,color:#fff
+    style S fill:#5d8fc4,stroke:#4a7399,stroke-width:2px,color:#fff
+    style X fill:#4CAF50,stroke:#45a049,stroke-width:2px,color:#fff
+    style M fill:#f9f9f9,stroke:#666,stroke-width:2px,color:#333
+    style Q fill:#fff,stroke:#999,stroke-width:2px,color:#333
+    style P fill:#fff,stroke:#999,stroke-width:2px,color:#333
+    style E fill:#fff,stroke:#999,stroke-width:2px,color:#333
 ```
 
 ## Components
