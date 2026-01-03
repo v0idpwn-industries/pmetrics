@@ -4,16 +4,16 @@ pmetrics is a PostgreSQL extension that provides a metrics collection infrastruc
 
 ```mermaid
 graph LR
-    Q[Your Queries]
-    P[Your PL/pgSQL]
-    E[Your Extensions]
+    Q[Queries]
+    P[PL/pgSQL]
+    E[Extensions]
 
-    Q -->|automatic| S[pmetrics_stmts]
+    Q -->|hooks| S[pmetrics_stmts]
     P -->|SQL API| C[pmetrics]
     E -->|C API| C
-    S -->|records to| C
+    S --> C
 
-    C -->|list_metrics| X[pmetrics exporter]
+    X[pmetrics prometheus exporter] -->|pull| C
     X --> M[Prometheus/Grafana]
 
     style C fill:#336791,stroke:#2c5985,stroke-width:2px,color:#fff
