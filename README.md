@@ -7,14 +7,15 @@ graph LR
     Q[Queries]
     P[PL/pgSQL]
     E[Extensions]
+    X[pmetrics prometheus exporter]
 
     Q -->|hooks| S[pmetrics_stmts]
     P -->|SQL API| C[pmetrics]
     E -->|C API| C
     S --> C
 
-    C <--. X[pmetrics prometheus exporter]
-    X --> M[Prometheus/Grafana]
+    C <--. X
+    X --> M[Prometheus]
 
     style C fill:#336791,stroke:#2c5985,stroke-width:2px,color:#fff
     style S fill:#5d8fc4,stroke:#4a7399,stroke-width:2px,color:#fff
