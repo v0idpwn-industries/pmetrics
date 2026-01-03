@@ -1,6 +1,6 @@
 # pmetrics
 
-pmetrics is a PostgreSQL extension that provides a metrics collection infrastructure for use by other PostgreSQL extensions. It implements counters, gauges, and histograms with JSONB labels, stored in dynamic shared memory and queryable via SQL.
+pmetrics is a PostgreSQL extension that provides a metrics collection infrastructure for Postgres. It implements counters, gauges, and histograms with JSONB labels, stored in dynamic shared memory and queryable via SQL.
 
 ```mermaid
 flowchart LR
