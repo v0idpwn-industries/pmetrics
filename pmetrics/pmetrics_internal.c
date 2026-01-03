@@ -30,13 +30,13 @@ static bool backend_attached = false;
 static void cleanup_metrics_backend(int code, Datum arg);
 
 /* dshash parameters (references function pointers defined in this file) */
-const dshash_parameters metrics_params = {
-    .key_size = sizeof(MetricKey),
-    .entry_size = sizeof(Metric),
-    .compare_function = metric_compare_dshash,
-    .hash_function = metric_hash_dshash,
-    .copy_function = metric_key_copy,
-    .tranche_id = LWTRANCHE_PMETRICS};
+const dshash_parameters metrics_params = {.key_size = sizeof(MetricKey),
+                                          .entry_size = sizeof(Metric),
+                                          .compare_function =
+                                              metric_compare_dshash,
+                                          .hash_function = metric_hash_dshash,
+                                          .copy_function = metric_key_copy,
+                                          .tranche_id = LWTRANCHE_PMETRICS};
 
 /*
  * Cleanup callback when backend exits.

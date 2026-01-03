@@ -170,7 +170,6 @@ void _PG_init(void)
 	shmem_request_hook = metrics_shmem_request;
 }
 
-
 static Datum pmetrics_increment_by(const char *name_str, Jsonb *labels_jsonb,
                                    MetricType type, int bucket, int64 amount)
 {
@@ -719,4 +718,3 @@ static int pmetrics_bucket_for(double value)
 
 	return this_bucket_upper_bound;
 }
-
