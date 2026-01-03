@@ -1,18 +1,17 @@
 # pmetrics Prometheus Exporter
 
-A lightweight Python service that exports `pmetrics` metrics in Prometheus text format. The exporter queries PostgreSQL via SQL and serves metrics on an HTTP endpoint for Prometheus scraping.
+A lightweight service that exports `pmetrics` metrics in Prometheus text format. The exporter queries PostgreSQL via SQL and serves metrics on an HTTP endpoint for Prometheus scraping.
 
 ## Overview
 
-This single-file exporter bridges PostgreSQL metrics stored by `pmetrics` and the Prometheus monitoring ecosystem. It translates pmetrics data structures (counters, gauges, histograms with JSONB labels) into Prometheus exposition format.
+This exporter translates pmetrics data structures (counters, gauges, histograms with JSONB labels) into Prometheus exposition format.
 
 When `pmetrics_stmts` is enabled, the exporter automatically joins query performance metrics with their corresponding query text, adding truncated query strings as labels for easier identification.
 
 ## Dependencies
 
-**Required Python packages**:
-- `psycopg2`: PostgreSQL database adapter
-- Python 3.7+
+**Required for building**:
+- Go 1.21 or later
 
 **Required PostgreSQL extensions**:
 - `pmetrics`: Core metrics extension (required)
@@ -21,13 +20,13 @@ When `pmetrics_stmts` is enabled, the exporter automatically joins query perform
 ## Installation
 
 ```bash
-pip install -r requirements.txt
+go build -o pmetrics-exporter
 ```
 
-Alternatively, install dependencies directly:
+Build static binary for Linux:
 
 ```bash
-pip install psycopg2-binary
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o pmetrics-exporter
 ```
 
 ## Configuration
@@ -51,7 +50,7 @@ The exporter is configured via environment variables:
 ### Basic Usage
 
 ```bash
-DATABASE_URL=postgresql://user:pass@host:5432/dbname python exporter.py
+DATABASE_URL=postgresql://user:pass@host:5432/dbname ./pmetrics-exporter
 ```
 
 The service starts and listens on port 9187 (default).
@@ -59,29 +58,7 @@ The service starts and listens on port 9187 (default).
 ### Custom Port
 
 ```bash
-DATABASE_URL=postgresql://user:pass@host:5432/dbname PORT=9188 python exporter.py
-```
-
-### Production Deployment
-
-For production use, consider running with a process supervisor:
-
-```bash
-# systemd service example
-[Unit]
-Description=pmetrics Prometheus Exporter
-After=postgresql.service
-
-[Service]
-Type=simple
-User=postgres
-Environment="DATABASE_URL=postgresql:///mydb"
-Environment="PORT=9187"
-ExecStart=/usr/bin/python3 /path/to/exporter.py
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
+DATABASE_URL=postgresql://user:pass@host:5432/dbname PORT=9188 ./pmetrics-exporter
 ```
 
 ## Endpoints
@@ -107,12 +84,8 @@ query_execution_time_ms_bucket{dbid="16384",queryid="3248392847",userid="10",que
 query_execution_time_ms_bucket{dbid="16384",queryid="3248392847",userid="10",query="SELECT * FROM users WHERE id = $1",le="2"} 489
 query_execution_time_ms_bucket{dbid="16384",queryid="3248392847",userid="10",query="SELECT * FROM users WHERE id = $1",le="+Inf"} 512
 query_execution_time_ms_count{dbid="16384",queryid="3248392847",userid="10",query="SELECT * FROM users WHERE id = $1"} 512
-query_execution_time_ms_sum{dbid="16384",queryid="3248392847",userid="10",query="SELECT * FROM users WHERE id = $1"} 687.34
+query_execution_time_ms_sum{dbid="16384",queryid="3248392847",userid="10",query="SELECT * FROM users WHERE id = $1"} 687
 ```
-
-### GET /
-
-Returns a simple HTML status page with a link to `/metrics`.
 
 ## Prometheus Configuration
 

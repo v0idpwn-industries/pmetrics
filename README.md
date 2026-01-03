@@ -70,7 +70,6 @@ The `examples/pmetrics_txn/` directory contains a minimal example extension demo
 
 - PostgreSQL 17 or later
 - C compiler for building extensions
-- Python 3.7+ for Prometheus exporter (optional)
 
 ## License
 
