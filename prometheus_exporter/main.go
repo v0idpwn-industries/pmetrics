@@ -139,7 +139,10 @@ func fetchMetrics(db *sql.DB) ([]Metric, []int, error) {
 		}
 
 		if len(labelsJSON) > 0 {
-			if err := json.Unmarshal(labelsJSON, &m.Labels); err != nil {
+			// Use decoder with UseNumber to preserve integer precision
+			decoder := json.NewDecoder(strings.NewReader(string(labelsJSON)))
+			decoder.UseNumber()
+			if err := decoder.Decode(&m.Labels); err != nil {
 				return nil, nil, fmt.Errorf("failed to parse labels: %w", err)
 			}
 		} else {

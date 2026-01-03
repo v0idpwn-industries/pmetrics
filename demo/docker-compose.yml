@@ -41,7 +41,7 @@ services:
       dockerfile: Dockerfile
     container_name: pmetrics-demo-exporter
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/demo
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/demo?sslmode=disable
       PORT: 9187
     ports:
       - "9187:9187"
