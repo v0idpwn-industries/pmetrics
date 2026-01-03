@@ -433,14 +433,10 @@ Datum increment_counter_by(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(set_gauge);
 Datum set_gauge(PG_FUNCTION_ARGS)
 {
-	Metric *entry;
-	MetricKey metric_key;
-	bool found;
 	Jsonb *labels_jsonb;
 	char *name_str = NULL;
 	int64 new_value;
 	int64 result;
-	dshash_table *table;
 
 	if (!pmetrics_enabled)
 		PG_RETURN_NULL();
@@ -450,21 +446,7 @@ Datum set_gauge(PG_FUNCTION_ARGS)
 		extract_metric_args(fcinfo, 0, 1, &name_str, &labels_jsonb);
 		new_value = PG_GETARG_INT64(2);
 
-		table = get_metrics_table();
-		if (table == NULL)
-			elog(ERROR, "pmetrics not initialized");
-
-		init_metric_key(&metric_key, name_str, labels_jsonb, METRIC_TYPE_GAUGE,
-		                0);
-
-		entry = (Metric *)dshash_find_or_insert(table, &metric_key, &found);
-
-		/* Key already copied by metric_key_copy function if new entry */
-
-		entry->value = new_value;
-		result = entry->value;
-
-		dshash_release_lock(table, entry);
+		result = pmetrics_set_gauge(name_str, labels_jsonb, new_value);
 	}
 	PG_CATCH();
 	{
@@ -835,8 +817,7 @@ Datum list_histogram_buckets(PG_FUNCTION_ARGS)
 	}
 }
 
-PG_FUNCTION_INFO_V1(clear_metrics);
-Datum clear_metrics(PG_FUNCTION_ARGS)
+__attribute__((visibility("default"))) int64 pmetrics_clear_metrics(void)
 {
 	dshash_table *metrics_table;
 	dshash_seq_status status;
@@ -854,6 +835,16 @@ Datum clear_metrics(PG_FUNCTION_ARGS)
 		deleted_count++;
 	}
 	dshash_seq_term(&status);
+
+	return deleted_count;
+}
+
+PG_FUNCTION_INFO_V1(clear_metrics);
+Datum clear_metrics(PG_FUNCTION_ARGS)
+{
+	int64 deleted_count;
+
+	deleted_count = pmetrics_clear_metrics();
 
 	PG_RETURN_INT64(deleted_count);
 }

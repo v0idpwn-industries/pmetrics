@@ -105,6 +105,16 @@ extern Datum pmetrics_record_histogram(const char *name_str,
                                        Jsonb *labels_jsonb, double value);
 
 /**
+ * Clear all metrics from the metrics table.
+ *
+ * Deletes all metric entries and frees associated DSA memory for labels.
+ * This is an administrative function typically used for testing or maintenance.
+ *
+ * @return Number of metrics deleted
+ */
+extern int64 pmetrics_clear_metrics(void);
+
+/**
  * Check if metrics collection is currently enabled.
  * Returns the value of pmetrics.enabled configuration parameter.
  */
