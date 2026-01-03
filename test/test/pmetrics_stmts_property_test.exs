@@ -92,6 +92,16 @@ defmodule PmetricsStmtsPropertyTest do
       assert planning_count ==
                sum_bucket_values(metrics_map, "query_planning_time_ms", spec.normalized)
 
+      # Buffer tracking assertions
+      buffer_hit_count =
+        get_histogram_count(metrics_map, "query_shared_blocks_hit", spec.normalized)
+
+      buffer_read_count =
+        get_histogram_count(metrics_map, "query_shared_blocks_read", spec.normalized)
+
+      assert buffer_hit_count == spec.executions
+      assert buffer_read_count == spec.executions
+
       if Map.has_key?(spec, :target_bucket_ms) do
         target_bucket = find_bucket_for_value(buckets, spec.target_bucket_ms)
 

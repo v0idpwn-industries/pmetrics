@@ -6,8 +6,7 @@
  *
  * Requires pmetrics to be loaded first via shared_preload_libraries.
  *
- * Query normalization code (replacing constants with placeholders) is adapted
- * from PostgreSQL's contrib/pg_stat_statements extension.
+ * Most of this code is derived from PostgreSQL's contrib/pg_stat_statements.
  * Copyright (c) 2008-2025, PostgreSQL Global Development Group
  */
 
@@ -69,9 +68,13 @@ static ExecutorEnd_hook_type prev_ExecutorEnd_hook = NULL;
 static int nesting_level = 0;
 
 /* Configs */
-#define DEFAULT_ENABLED true
+#define DEFAULT_TRACK_TIMES true
+#define DEFAULT_TRACK_ROWS true
+#define DEFAULT_TRACK_BUFFERS false
 
-static bool pmetrics_stmts_enabled = DEFAULT_ENABLED;
+static bool pmetrics_stmts_track_times = DEFAULT_TRACK_TIMES;
+static bool pmetrics_stmts_track_rows = DEFAULT_TRACK_ROWS;
+static bool pmetrics_stmts_track_buffers = DEFAULT_TRACK_BUFFERS;
 
 /* Query text storage structures */
 typedef struct {
@@ -204,10 +207,20 @@ void _PG_init(void)
 	if (pmetrics_state == NULL)
 		elog(WARNING, "pmetrics_stmts: pmetrics does not appear to be loaded");
 
-	DefineCustomBoolVariable("pmetrics_stmts.enabled",
-	                         "Enable query performance tracking", NULL,
-	                         &pmetrics_stmts_enabled, DEFAULT_ENABLED,
+	DefineCustomBoolVariable("pmetrics_stmts.track_times",
+	                         "Track query planning and execution times", NULL,
+	                         &pmetrics_stmts_track_times, DEFAULT_TRACK_TIMES,
 	                         PGC_SIGHUP, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable("pmetrics_stmts.track_rows",
+	                         "Track query row counts", NULL,
+	                         &pmetrics_stmts_track_rows, DEFAULT_TRACK_ROWS,
+	                         PGC_SIGHUP, 0, NULL, NULL, NULL);
+
+	DefineCustomBoolVariable(
+	    "pmetrics_stmts.track_buffers", "Track buffer usage distributions",
+	    NULL, &pmetrics_stmts_track_buffers, DEFAULT_TRACK_BUFFERS, PGC_SIGHUP,
+	    0, NULL, NULL, NULL);
 
 	MarkGUCPrefixReserved("pmetrics_stmts");
 
@@ -432,10 +445,11 @@ static PlannedStmt *pmetrics_stmts_planner_hook(Query *parse,
 	Jsonb *labels_jsonb;
 	char metric_name[NAMEDATALEN];
 
-	/* Track metrics only if both pmetrics and pmetrics_stmts are enabled, and
+	/* Track metrics only if both pmetrics and track_times are enabled, and
 	 * at top level */
-	if (pmetrics_is_enabled() && pmetrics_stmts_enabled && nesting_level == 0 &&
-	    query_string && parse->queryId != UINT64CONST(0)) {
+	if (pmetrics_is_enabled() && pmetrics_stmts_track_times &&
+	    nesting_level == 0 && query_string &&
+	    parse->queryId != UINT64CONST(0)) {
 		INSTR_TIME_SET_CURRENT(start_time);
 
 		nesting_level++;
@@ -495,8 +509,12 @@ static void pmetrics_stmts_ExecutorStart_hook(QueryDesc *queryDesc, int eflags)
 	else
 		standard_ExecutorStart(queryDesc, eflags);
 
-	/* Allocate instrumentation if we're tracking queries and at top level */
-	if (pmetrics_is_enabled() && pmetrics_stmts_enabled && nesting_level == 0 &&
+	/* Allocate instrumentation if we're tracking any metrics and at top level
+	 */
+	if (pmetrics_is_enabled() &&
+	    (pmetrics_stmts_track_times || pmetrics_stmts_track_rows ||
+	     pmetrics_stmts_track_buffers) &&
+	    nesting_level == 0 &&
 	    queryDesc->plannedstmt->queryId != UINT64CONST(0)) {
 		if (queryDesc->totaltime == NULL) {
 			MemoryContext oldcxt;
@@ -510,7 +528,8 @@ static void pmetrics_stmts_ExecutorStart_hook(QueryDesc *queryDesc, int eflags)
 }
 
 /*
- * ExecutorEnd hook: collect execution metrics (time and row count).
+ * ExecutorEnd hook: collect execution metrics (time, row count, and optionally
+ * buffer usage).
  */
 static void pmetrics_stmts_ExecutorEnd_hook(QueryDesc *queryDesc)
 {
@@ -521,21 +540,42 @@ static void pmetrics_stmts_ExecutorEnd_hook(QueryDesc *queryDesc)
 	uint64 rows_processed;
 
 	if (queryid != UINT64CONST(0) && queryDesc->totaltime &&
-	    pmetrics_is_enabled() && pmetrics_stmts_enabled && nesting_level == 0) {
+	    pmetrics_is_enabled() &&
+	    (pmetrics_stmts_track_times || pmetrics_stmts_track_rows ||
+	     pmetrics_stmts_track_buffers) &&
+	    nesting_level == 0) {
 		/* Finalize timing - this must be called before reading totaltime */
 		InstrEndLoop(queryDesc->totaltime);
 
-		total_time_ms = queryDesc->totaltime->total * 1000.0;
-		rows_processed = queryDesc->estate->es_processed;
-
 		labels_jsonb = build_query_labels(queryid, GetUserId(), MyDatabaseId);
 
-		snprintf(metric_name, NAMEDATALEN, "query_execution_time_ms");
-		pmetrics_record_histogram(metric_name, labels_jsonb, total_time_ms);
+		/* Track execution time if enabled */
+		if (pmetrics_stmts_track_times) {
+			total_time_ms = queryDesc->totaltime->total * 1000.0;
+			snprintf(metric_name, NAMEDATALEN, "query_execution_time_ms");
+			pmetrics_record_histogram(metric_name, labels_jsonb, total_time_ms);
+		}
 
-		snprintf(metric_name, NAMEDATALEN, "query_rows_returned");
-		pmetrics_record_histogram(metric_name, labels_jsonb,
-		                          (double)rows_processed);
+		/* Track row count if enabled */
+		if (pmetrics_stmts_track_rows) {
+			rows_processed = queryDesc->estate->es_processed;
+			snprintf(metric_name, NAMEDATALEN, "query_rows_returned");
+			pmetrics_record_histogram(metric_name, labels_jsonb,
+			                          (double)rows_processed);
+		}
+
+		/* Track buffer usage if enabled */
+		if (pmetrics_stmts_track_buffers) {
+			BufferUsage *bufusage = &queryDesc->totaltime->bufusage;
+
+			snprintf(metric_name, NAMEDATALEN, "query_shared_blocks_hit");
+			pmetrics_record_histogram(metric_name, labels_jsonb,
+			                          (double)bufusage->shared_blks_hit);
+
+			snprintf(metric_name, NAMEDATALEN, "query_shared_blocks_read");
+			pmetrics_record_histogram(metric_name, labels_jsonb,
+			                          (double)bufusage->shared_blks_read);
+		}
 	}
 
 	if (prev_ExecutorEnd_hook)
@@ -747,8 +787,10 @@ static void pmetrics_stmts_post_parse_analyze(ParseState *pstate, Query *query,
 	if (prev_post_parse_analyze_hook)
 		prev_post_parse_analyze_hook(pstate, query, jstate);
 
-	/* Do nothing if not enabled or if we don't have valid data */
-	if (!pmetrics_is_enabled() || !pmetrics_stmts_enabled)
+	/* Do nothing if no tracking is enabled or if we don't have valid data */
+	if (!pmetrics_is_enabled() ||
+	    (!pmetrics_stmts_track_times && !pmetrics_stmts_track_rows &&
+	     !pmetrics_stmts_track_buffers))
 		return;
 
 	if (query->queryId == UINT64CONST(0) || pstate->p_sourcetext == NULL)

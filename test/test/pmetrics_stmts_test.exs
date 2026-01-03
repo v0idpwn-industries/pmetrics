@@ -32,6 +32,13 @@ defmodule PmetricsStmtsTest do
       assert count_metrics("query_rows_returned", "histogram") > 0
     end
 
+    test "tracks buffer usage when enabled" do
+      query("SELECT generate_series(1, 10)")
+
+      assert count_metrics("query_shared_blocks_hit", "histogram") > 0
+      assert count_metrics("query_shared_blocks_read", "histogram") >= 0
+    end
+
     test "creates histogram_sum entries for all metric types" do
       query("SELECT generate_series(1, 5)")
 
@@ -42,13 +49,23 @@ defmodule PmetricsStmtsTest do
           JOIN pmetrics_stmts.list_queries() q
             ON (m.labels->>'queryid')::bigint = q.queryid
           WHERE m.type = 'histogram_sum'
-          AND m.name IN ('query_execution_time_ms', 'query_planning_time_ms', 'query_rows_returned')
+          AND m.name IN (
+            'query_execution_time_ms',
+            'query_planning_time_ms',
+            'query_rows_returned',
+            'query_shared_blocks_hit',
+            'query_shared_blocks_read'
+          )
           AND q.query_text = 'SELECT generate_series($1, $2)'
           ORDER BY m.name
         """)
 
-      assert [["query_execution_time_ms"], ["query_planning_time_ms"], ["query_rows_returned"]] =
-               result.rows
+      metric_names = Enum.map(result.rows, fn [name] -> name end)
+      assert "query_execution_time_ms" in metric_names
+      assert "query_planning_time_ms" in metric_names
+      assert "query_rows_returned" in metric_names
+      assert "query_shared_blocks_hit" in metric_names
+      assert "query_shared_blocks_read" in metric_names
     end
   end
 

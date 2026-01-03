@@ -4,9 +4,9 @@
 
 ## Overview
 
-This extension hooks into PostgreSQL's planner and executor to measure planning time, execution time, and rows returned for all queries. Unlike `pg_stat_statements` which provides aggregate statistics, `pmetrics_stmts` records metrics as histograms, preserving the full distribution of observed values.
+This extension hooks into PostgreSQL's planner and executor to optionally measure planning time, execution time, rows returned, and buffer usage for all queries. Unlike `pg_stat_statements` which provides aggregate statistics, `pmetrics_stmts` records metrics as histograms, preserving the full distribution of observed values.
 
-All metrics are stored using the `pmetrics` extension's infrastructure and are queryable via SQL.
+All metrics are stored using the `pmetrics` extension's infrastructure and are queryable via SQL. Tracking can be controlled separately for time metrics (enabled by default), row counts (enabled by default), and buffer usage (disabled by default).
 
 ## Dependencies
 
@@ -51,22 +51,38 @@ CREATE EXTENSION pmetrics_stmts;
 
 ## Configuration Parameters
 
-### pmetrics_stmts.enabled
+### pmetrics_stmts.track_times
 
 - **Type**: Boolean
 - **Default**: `true`
 - **Context**: PGC_SIGHUP (reload without restart)
-- **Description**: Enables or disables query tracking. When disabled, hooks are no-ops.
+- **Description**: Enables or disables query planning and execution time tracking. When disabled, planning and execution time metrics are not recorded.
+
+### pmetrics_stmts.track_rows
+
+- **Type**: Boolean
+- **Default**: `true`
+- **Context**: PGC_SIGHUP (reload without restart)
+- **Description**: Enables or disables query row count tracking. When disabled, row count metrics are not recorded.
+
+### pmetrics_stmts.track_buffers
+
+- **Type**: Boolean
+- **Default**: `false`
+- **Context**: PGC_SIGHUP (reload without restart)
+- **Description**: Enables or disables buffer usage tracking (shared blocks hit/read). When disabled, buffer metrics are not recorded. Disabled by default due to additional overhead.
 
 ## Tracked Metrics
 
-The extension automatically creates three histogram metrics for each unique query:
+The extension automatically creates histogram metrics for each unique query based on enabled tracking options:
 
 ### query_planning_time_ms
 
 Planning time in milliseconds, measured by the planner hook.
 
 **Type**: Histogram
+
+**Controlled by**: `pmetrics_stmts.track_times`
 
 **Labels**:
 - `queryid`: PostgreSQL query identifier (uint64)
@@ -79,6 +95,8 @@ Execution time in milliseconds, measured from executor start to executor end.
 
 **Type**: Histogram
 
+**Controlled by**: `pmetrics_stmts.track_times`
+
 **Labels**: Same as `query_planning_time_ms`
 
 ### query_rows_returned
@@ -86,6 +104,28 @@ Execution time in milliseconds, measured from executor start to executor end.
 Number of rows returned by the query.
 
 **Type**: Histogram
+
+**Controlled by**: `pmetrics_stmts.track_rows`
+
+**Labels**: Same as `query_planning_time_ms`
+
+### query_shared_blocks_hit
+
+Number of shared buffer cache hits (data found in memory).
+
+**Type**: Histogram
+
+**Controlled by**: `pmetrics_stmts.track_buffers`
+
+**Labels**: Same as `query_planning_time_ms`
+
+### query_shared_blocks_read
+
+Number of shared buffer reads from disk.
+
+**Type**: Histogram
+
+**Controlled by**: `pmetrics_stmts.track_buffers`
 
 **Labels**: Same as `query_planning_time_ms`
 

@@ -2,10 +2,13 @@
 """
 pmetrics Demo
 
-Two query patterns with variable performance:
+Query patterns with variable performance:
 
 1. pg_sleep($1): 10ms (10%), 100ms (89%), 5s (1%)
 2. generate_series(1, $1): 1 row (50%), 10 rows (30%), 100 rows (15%), 1000 rows (4%), 10000 rows (1%)
+3. table scan (BETWEEN): small ranges 100-1000 rows (70%), large ranges 10K-50K rows (30%)
+
+Table size: 500,000 rows (~100-200MB) to generate buffer cache misses and disk reads
 """
 import os
 import time
@@ -43,7 +46,7 @@ def get_db_connection():
 
 
 def setup_schema():
-    """Create pmetrics extensions."""
+    """Create pmetrics extensions and demo tables."""
     print("Setting up database...")
     with get_db_connection() as conn:
         conn.autocommit = True
@@ -51,6 +54,38 @@ def setup_schema():
             # Create extensions
             cur.execute("CREATE EXTENSION IF NOT EXISTS pmetrics;")
             cur.execute("CREATE EXTENSION IF NOT EXISTS pmetrics_stmts;")
+
+            # Create demo table for buffer tracking
+            # Large enough to exceed typical shared_buffers and generate disk reads
+            cur.execute("DROP TABLE IF EXISTS demo_buffer_test;")
+            cur.execute(
+                """
+                CREATE TABLE demo_buffer_test (
+                    id SERIAL PRIMARY KEY,
+                    data TEXT,
+                    padding TEXT,
+                    value INTEGER
+                );
+            """
+            )
+
+            # Insert test data (500K rows with padding to ensure significant size)
+            # This should be ~100-200MB, ensuring cache misses
+            cur.execute(
+                """
+                INSERT INTO demo_buffer_test (data, padding, value)
+                SELECT
+                    'data_' || i::text,
+                    repeat('x', 200),
+                    (random() * 1000)::integer
+                FROM generate_series(1, 500000) i;
+            """
+            )
+
+            # Create index
+            cur.execute(
+                "CREATE INDEX idx_demo_buffer_value ON demo_buffer_test(value);"
+            )
 
     print("Setup complete!\n")
 
@@ -146,6 +181,39 @@ def worker_fluctuating():
         time.sleep(random.uniform(0.01, 0.05))
 
 
+def worker_table_scan():
+    """Worker that scans table ranges to generate buffer activity."""
+    worker_name = "table_scan"
+    print(f"[{worker_name}] Starting worker...")
+
+    while True:
+        try:
+            # Bimodal distribution: small ranges (cached) vs large ranges (disk reads)
+            rand = random.random()
+            if rand < 0.70:
+                # 70%: Small range (likely cached, high buffer hits)
+                start = random.randint(1, 490000)
+                end = start + random.randint(100, 1000)
+            else:
+                # 30%: Large range (will cause disk reads due to table size)
+                start = random.randint(1, 400000)
+                end = start + random.randint(10000, 50000)
+
+            with get_db_connection() as conn:
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT * FROM demo_buffer_test WHERE id BETWEEN %s AND %s;",
+                        (start, end),
+                    )
+                    rows = cur.fetchall()
+
+        except Exception as e:
+            print(f"[{worker_name}] Error: {e}")
+
+        time.sleep(random.uniform(0.01, 0.05))
+
+
 def main():
     """Main entry point."""
     print("=" * 70)
@@ -166,6 +234,8 @@ def main():
         threading.Thread(target=worker_read_rows, daemon=True),
         threading.Thread(target=worker_fluctuating, daemon=True),
         threading.Thread(target=worker_fluctuating, daemon=True),
+        threading.Thread(target=worker_table_scan, daemon=True),
+        threading.Thread(target=worker_table_scan, daemon=True),
     ]
 
     for worker in workers:

@@ -68,7 +68,8 @@ services:
       -c max_connections=100
       -c work_mem=4MB
       -c pmetrics.enabled=true
-      -c pmetrics_stmts.enabled=true
+      -c pmetrics_stmts.track_times=true
+      -c pmetrics_stmts.track_rows=true
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
