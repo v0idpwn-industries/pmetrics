@@ -5,38 +5,15 @@ pmetrics is a PostgreSQL extension that provides a metrics collection infrastruc
 ## Architecture
 
 ```mermaid
-graph TB
-    subgraph "Data Sources"
-        Q[PostgreSQL Queries]
-        PL[PL/pgSQL Functions]
-        EXT[Other Extensions]
-    end
+graph LR
+    Q[Queries] --> S[pmetrics_stmts]
+    P[PL/pgSQL] --> C[pmetrics]
+    E[Extensions] --> C
+    S --> C
+    C --> D[Shared Memory]
+    D --> O[Observability Stack]
 
-    subgraph "pmetrics Ecosystem"
-        STMTS[pmetrics_stmts<br/>Auto-tracks query performance]
-        CORE[pmetrics<br/>Counters, Gauges, Histograms]
-        DSM[Dynamic Shared Memory<br/>dshash + JSONB labels]
-    end
-
-    subgraph "Monitoring"
-        EXP[Prometheus Exporter<br/>Queries list_metrics]
-        PROM[Prometheus]
-        GRAF[Grafana]
-    end
-
-    Q --> STMTS
-    STMTS --> CORE
-    PL --> CORE
-    EXT --> CORE
-    CORE --> DSM
-
-    DSM -.-> EXP
-    EXP --> PROM
-    PROM --> GRAF
-
-    style CORE fill:#336791,stroke:#fff,stroke-width:3px,color:#fff
-    style DSM fill:#4CAF50,color:#fff
-    style GRAF fill:#F46800,color:#fff
+    style C fill:#336791,color:#fff
 ```
 
 ## Components
