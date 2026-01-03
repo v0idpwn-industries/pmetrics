@@ -16,7 +16,7 @@ flowchart LR
     Q -->|hooks| S
     P -->|SQL API| C
     E -->|C API| C
-    S -->|metrics| C
+    S -->|C API| C
 
     C e1@--> X
     e1@{ animation: fast }
