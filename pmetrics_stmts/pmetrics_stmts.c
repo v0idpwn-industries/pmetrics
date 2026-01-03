@@ -447,8 +447,9 @@ static PlannedStmt *pmetrics_stmts_planner_hook(Query *parse,
 
 	/* Track metrics only if both pmetrics and track_times are enabled, and
 	 * at top level */
-	if (pmetrics_is_enabled() && pmetrics_stmts_track_times && nesting_level == 0 &&
-	    query_string && parse->queryId != UINT64CONST(0)) {
+	if (pmetrics_is_enabled() && pmetrics_stmts_track_times &&
+	    nesting_level == 0 && query_string &&
+	    parse->queryId != UINT64CONST(0)) {
 		INSTR_TIME_SET_CURRENT(start_time);
 
 		nesting_level++;
@@ -508,10 +509,13 @@ static void pmetrics_stmts_ExecutorStart_hook(QueryDesc *queryDesc, int eflags)
 	else
 		standard_ExecutorStart(queryDesc, eflags);
 
-	/* Allocate instrumentation if we're tracking any metrics and at top level */
+	/* Allocate instrumentation if we're tracking any metrics and at top level
+	 */
 	if (pmetrics_is_enabled() &&
-	    (pmetrics_stmts_track_times || pmetrics_stmts_track_rows || pmetrics_stmts_track_buffers) &&
-	    nesting_level == 0 && queryDesc->plannedstmt->queryId != UINT64CONST(0)) {
+	    (pmetrics_stmts_track_times || pmetrics_stmts_track_rows ||
+	     pmetrics_stmts_track_buffers) &&
+	    nesting_level == 0 &&
+	    queryDesc->plannedstmt->queryId != UINT64CONST(0)) {
 		if (queryDesc->totaltime == NULL) {
 			MemoryContext oldcxt;
 
@@ -537,7 +541,8 @@ static void pmetrics_stmts_ExecutorEnd_hook(QueryDesc *queryDesc)
 
 	if (queryid != UINT64CONST(0) && queryDesc->totaltime &&
 	    pmetrics_is_enabled() &&
-	    (pmetrics_stmts_track_times || pmetrics_stmts_track_rows || pmetrics_stmts_track_buffers) &&
+	    (pmetrics_stmts_track_times || pmetrics_stmts_track_rows ||
+	     pmetrics_stmts_track_buffers) &&
 	    nesting_level == 0) {
 		/* Finalize timing - this must be called before reading totaltime */
 		InstrEndLoop(queryDesc->totaltime);
@@ -784,7 +789,8 @@ static void pmetrics_stmts_post_parse_analyze(ParseState *pstate, Query *query,
 
 	/* Do nothing if no tracking is enabled or if we don't have valid data */
 	if (!pmetrics_is_enabled() ||
-	    (!pmetrics_stmts_track_times && !pmetrics_stmts_track_rows && !pmetrics_stmts_track_buffers))
+	    (!pmetrics_stmts_track_times && !pmetrics_stmts_track_rows &&
+	     !pmetrics_stmts_track_buffers))
 		return;
 
 	if (query->queryId == UINT64CONST(0) || pstate->p_sourcetext == NULL)
