@@ -18,7 +18,8 @@ flowchart LR
     E -->|C API| C
     S -->|metrics| C
 
-    C <-->|queries| X
+    C e1@--> X
+    e1@{ animation: fast }
 
     style C fill:#336791,stroke:#2c5985,stroke-width:3px,color:#fff
     style S fill:#4a7399,stroke:#336791,stroke-width:2px,color:#fff
