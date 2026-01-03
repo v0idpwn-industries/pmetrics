@@ -11,21 +11,18 @@ flowchart LR
     S[pmetrics_stmts]
     C[pmetrics]
 
-    X[Prometheus Exporter]
-    M[Observability Stack]
+    X[pmetrics Prometheus Exporter]
 
     Q -->|hooks| S
     P -->|SQL API| C
     E -->|C API| C
     S -->|metrics| C
 
-    C -->|queries| X
-    X -->|export| M
+    C <-->|queries| X
 
     style C fill:#336791,stroke:#2c5985,stroke-width:3px,color:#fff
     style S fill:#4a7399,stroke:#336791,stroke-width:2px,color:#fff
     style X fill:#5d8fc4,stroke:#4a7399,stroke-width:2px,color:#fff
-    style M fill:#6c8ebf,stroke:#5d8fc4,stroke-width:2px,color:#fff
     style Q fill:none,stroke:#8d99ae,stroke-width:1px,color:#2b2d42,stroke-dasharray: 5 5
     style P fill:none,stroke:#8d99ae,stroke-width:1px,color:#2b2d42,stroke-dasharray: 5 5
     style E fill:none,stroke:#8d99ae,stroke-width:1px,color:#2b2d42,stroke-dasharray: 5 5
