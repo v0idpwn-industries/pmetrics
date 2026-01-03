@@ -14,7 +14,7 @@ graph LR
     E -->|C API| C
     S --> C
 
-    C <--. X
+    C <-- X
     X --> M[Prometheus]
 
     style C fill:#336791,stroke:#2c5985,stroke-width:2px,color:#fff
