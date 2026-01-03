@@ -45,7 +45,7 @@ A pg_stat_statements alternative built on top of pmetrics. Tracks query performa
 
 ### pmetrics Prometheus Exporter
 
-Python service that queries PostgreSQL and exports metrics in Prometheus text exposition format.
+Service that queries PostgreSQL and exports metrics in Prometheus text exposition format.
 
 [Documentation](prometheus_exporter/README.md)
 
@@ -85,11 +85,11 @@ CREATE EXTENSION pmetrics_stmts;  -- optional
 
 ```bash
 cd prometheus_exporter
-pip install -r requirements.txt
-DATABASE_URL=postgresql:///mydb python exporter.py
+go build -o pmetrics-exporter
+DATABASE_URL=postgresql:///mydb ./pmetrics-exporter
 ```
 
-## Example
+## Using pmetrics from other extensions
 
 The `examples/pmetrics_txn/` directory contains a minimal example extension demonstrating how to integrate with pmetrics. It tracks PostgreSQL transactions (commits and aborts).
 
