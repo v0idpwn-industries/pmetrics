@@ -7,7 +7,7 @@ graph LR
     Q[Queries]
     P[PL/pgSQL]
     E[Extensions]
-    X[pmetrics prometheus exporter]
+    X[pmetrics Prometheus exporter]
 
     Q -->|hooks| S[pmetrics_stmts]
     P -->|SQL API| C[pmetrics]
@@ -15,7 +15,7 @@ graph LR
     S --> C
 
     C <-->|queries| X
-    X --> M[Prometheus]
+    X --> M[Your observability stack]
 
     style C fill:#336791,stroke:#2c5985,stroke-width:2px,color:#fff
     style S fill:#5d8fc4,stroke:#4a7399,stroke-width:2px,color:#fff
