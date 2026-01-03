@@ -1,0 +1,6 @@
+README.md
+.git
+.gitignore
+*.md
+pmetrics-exporter*
+!pmetrics-exporter.go

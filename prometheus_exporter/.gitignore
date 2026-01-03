@@ -1,0 +1,25 @@
+# Binaries
+pmetrics-exporter
+pmetrics-exporter-*
+*.exe
+
+# Go build artifacts
+*.o
+*.a
+*.so
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
