@@ -13,7 +13,7 @@ graph LR
     E -->|C API| C
     S --> C
 
-    X[pmetrics prometheus exporter] -->|pull| C
+    C <--.|pull| X[pmetrics prometheus exporter]
     X --> M[Prometheus/Grafana]
 
     style C fill:#336791,stroke:#2c5985,stroke-width:2px,color:#fff
