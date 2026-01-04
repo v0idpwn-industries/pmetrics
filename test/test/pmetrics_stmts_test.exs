@@ -282,7 +282,7 @@ defmodule PmetricsStmtsTest do
         """)
 
       [[count_before]] = result.rows
-      assert Decimal.to_integer(count_before) > 0
+      assert count_before > 0
 
       # Sleep for 2 seconds to make the query "old"
       Process.sleep(2000)
@@ -290,7 +290,7 @@ defmodule PmetricsStmtsTest do
       # Call cleanup function to remove queries older than 1 second
       result = query("SELECT pmetrics_stmts.cleanup_old_query_metrics(1)")
       [[cleaned_count]] = result.rows
-      assert Decimal.to_integer(cleaned_count) > 0
+      assert cleaned_count > 0
 
       # Verify query text was removed
       result =
@@ -311,7 +311,7 @@ defmodule PmetricsStmtsTest do
         """)
 
       [[count_after]] = result.rows
-      assert Decimal.to_integer(count_after) == 0
+      assert count_after == 0
     end
   end
 end
