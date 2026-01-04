@@ -174,9 +174,6 @@ The extension provides a public C API defined in `pmetrics.h`. Other extensions 
 ### Public Functions
 
 ```c
-/* Get shared state structure */
-PMetricsSharedState *pmetrics_get_shared_state(void);
-
 /* Get DSA area (for extensions sharing the same DSA) */
 dsa_area *pmetrics_get_dsa(void);
 

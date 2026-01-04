@@ -9,36 +9,22 @@
 #define PMETRICS_H
 
 #include "postgres.h"
-#include "storage/lwlock.h"
 #include "utils/jsonb.h"
-#include "lib/dshash.h"
 #include "utils/dsa.h"
 
-/* LWLock tranche IDs (must not conflict with other extensions) */
-#define LWTRANCHE_PMETRICS_DSA 1001
-#define LWTRANCHE_PMETRICS 1002
-
-/* Metric types */
-typedef enum MetricType {
-	METRIC_TYPE_COUNTER = 0,
-	METRIC_TYPE_GAUGE = 1,
-	METRIC_TYPE_HISTOGRAM = 2,
-	METRIC_TYPE_HISTOGRAM_SUM = 3
-} MetricType;
-
-/* Shared state stored in static shared memory */
-typedef struct PMetricsSharedState {
-	dsa_handle dsa;
-	dshash_table_handle metrics_handle;
-	LWLock *init_lock;
-	bool initialized;
-} PMetricsSharedState;
+/**
+ * Check if pmetrics is properly initialized.
+ * Returns true if pmetrics shared state is initialized and ready.
+ */
+extern bool pmetrics_is_initialized(void);
 
 /**
- * Get the shared state structure for accessing pmetrics from other extensions.
- * Returns NULL if pmetrics is not loaded or not initialized.
+ * Get the DSA handle for pmetrics' dynamic shared memory area.
+ * This is useful for other extensions that need to store the handle
+ * in their own shared state during startup.
+ * Raises ERROR if pmetrics is not initialized.
  */
-extern PMetricsSharedState *pmetrics_get_shared_state(void);
+extern dsa_handle pmetrics_get_dsa_handle(void);
 
 /**
  * Get the DSA area pointer for sharing with other extensions.

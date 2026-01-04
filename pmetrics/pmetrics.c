@@ -45,34 +45,30 @@
 
 PG_MODULE_MAGIC;
 
-/*
- * dshash uses 128 partitions internally (DSHASH_NUM_PARTITIONS).
- * This is hardcoded in PostgreSQL's dshash.c implementation.
- */
-#define PMETRICS_PARTITION_COUNT 128
+/* LWLock tranche IDs (must not conflict with other extensions) */
+#define LWTRANCHE_PMETRICS_DSA 1001
+#define LWTRANCHE_PMETRICS 1002
 
-static PMetricsSharedState *shared_state = NULL;
-
-/* Backend-local state (not in shared memory) */
-static dsa_area *local_dsa = NULL;
-static dshash_table *local_metrics_table = NULL;
-static bool backend_attached = false;
-
-/* Hooks */
-static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
-static shmem_request_hook_type prev_shmem_request_hook = NULL;
-
-/* Configs */
+/* GUC defaults */
 #define DEFAULT_ENABLED true
 #define DEFAULT_BUCKET_VARIABILITY 0.1
 #define DEFAULT_BUCKETS_UPPER_BOUND 30000
 
-static bool pmetrics_enabled = DEFAULT_ENABLED;
-static double bucket_variability = DEFAULT_BUCKET_VARIABILITY;
-static int buckets_upper_bound = DEFAULT_BUCKETS_UPPER_BOUND;
+/* Metric types */
+typedef enum MetricType {
+	METRIC_TYPE_COUNTER = 0,
+	METRIC_TYPE_GAUGE = 1,
+	METRIC_TYPE_HISTOGRAM = 2,
+	METRIC_TYPE_HISTOGRAM_SUM = 3
+} MetricType;
 
-static double gamma_val = 0;
-static double log_gamma = 0;
+/* Shared state stored in static shared memory */
+typedef struct PMetricsSharedState {
+	dsa_handle dsa;
+	dshash_table_handle metrics_handle;
+	LWLock *init_lock;
+	bool initialized;
+} PMetricsSharedState;
 
 typedef enum LabelsLocation {
 	LABELS_NONE = 0,  /* No labels (empty JSONB or null) */
@@ -95,6 +91,26 @@ typedef struct {
 	MetricKey key;
 	int64 value;
 } Metric;
+
+static PMetricsSharedState *shared_state = NULL;
+
+/* Backend-local state (not in shared memory) */
+static dsa_area *local_dsa = NULL;
+static dshash_table *local_metrics_table = NULL;
+static bool backend_attached = false;
+
+/* Hooks */
+static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
+static shmem_request_hook_type prev_shmem_request_hook = NULL;
+
+/* Configs */
+
+static bool pmetrics_enabled = DEFAULT_ENABLED;
+static double bucket_variability = DEFAULT_BUCKET_VARIABILITY;
+static int buckets_upper_bound = DEFAULT_BUCKETS_UPPER_BOUND;
+
+static double gamma_val = 0;
+static double log_gamma = 0;
 
 /* Function declarations */
 void _PG_init(void);
@@ -836,10 +852,17 @@ Datum clear_metrics(PG_FUNCTION_ARGS)
 	PG_RETURN_INT64(deleted_count);
 }
 
-__attribute__((visibility("default"))) PMetricsSharedState *
-pmetrics_get_shared_state(void)
+__attribute__((visibility("default"))) bool pmetrics_is_initialized(void)
 {
-	return shared_state;
+	return shared_state != NULL && shared_state->initialized;
+}
+
+__attribute__((visibility("default"))) dsa_handle pmetrics_get_dsa_handle(void)
+{
+	if (shared_state == NULL || !shared_state->initialized)
+		elog(ERROR, "pmetrics not initialized");
+
+	return shared_state->dsa;
 }
 
 __attribute__((visibility("default"))) dsa_area *pmetrics_get_dsa(void)

@@ -156,13 +156,11 @@ static void pmetrics_stmts_shmem_request(void)
 static void pmetrics_stmts_shmem_startup(void)
 {
 	bool found;
-	PMetricsSharedState *pmetrics_state;
 
 	if (prev_shmem_startup_hook)
 		prev_shmem_startup_hook();
 
-	pmetrics_state = pmetrics_get_shared_state();
-	if (pmetrics_state == NULL || !pmetrics_state->initialized)
+	if (!pmetrics_is_initialized())
 		elog(ERROR, "pmetrics_stmts requires pmetrics to be loaded first in "
 		            "shared_preload_libraries");
 
@@ -175,7 +173,7 @@ static void pmetrics_stmts_shmem_startup(void)
 		dshash_table *queries_table;
 
 		/* Reuse pmetrics' DSA to avoid multiple DSA areas */
-		stmts_shared_state->pmetrics_dsa = pmetrics_state->dsa;
+		stmts_shared_state->pmetrics_dsa = pmetrics_get_dsa_handle();
 
 		dsa = dsa_attach(stmts_shared_state->pmetrics_dsa);
 
@@ -201,12 +199,6 @@ static void pmetrics_stmts_shmem_startup(void)
 
 void _PG_init(void)
 {
-	PMetricsSharedState *pmetrics_state;
-
-	pmetrics_state = pmetrics_get_shared_state();
-	if (pmetrics_state == NULL)
-		elog(WARNING, "pmetrics_stmts: pmetrics does not appear to be loaded");
-
 	DefineCustomBoolVariable("pmetrics_stmts.track_times",
 	                         "Track query planning and execution times", NULL,
 	                         &pmetrics_stmts_track_times, DEFAULT_TRACK_TIMES,
