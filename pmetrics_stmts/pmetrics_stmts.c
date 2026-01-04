@@ -131,7 +131,7 @@ static Jsonb *build_query_labels(uint64 queryid, Oid userid, Oid dbid);
 /* Background worker functions */
 void pmetrics_stmts_cleanup_worker_main(Datum main_arg);
 
-/* Cleanup function - can be called from C or SQL */
+/* Cleanup function */
 int64 pmetrics_stmts_cleanup_old_metrics(int64 max_age_seconds);
 
 /* Query normalization functions (adapted from pg_stat_statements) */
