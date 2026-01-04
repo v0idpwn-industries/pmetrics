@@ -33,13 +33,13 @@ flowchart LR
 
 ### pmetrics (Core Extension)
 
-Provides the metrics collection infrastructure with counters, gauges, and histograms. Extensions record metrics via the C API or PL/pgSQL functions can use the SQL API.
+Provides the metrics collection infrastructure. Extensions record metrics via the C API, PL/pgSQL functions can use the SQL API.
 
 [Documentation](https://v0idpwn-industries.github.io/pmetrics/)
 
 ### pmetrics_stmts (Query Tracking Extension)
 
-A pg_stat_statements alternative built on top of pmetrics. Tracks query performance metrics (planning time, execution time, rows returned) as histograms.
+A pg_stat_statements alternative built on top of pmetrics. Tracks query performance metrics (planning time, execution time, rows returned, blocks hit) as histograms.
 
 [Documentation](pmetrics_stmts/README.md)
 
