@@ -14,6 +14,14 @@
  * `shmem_startup` hook.
  *
  * Check `pmetrics_stmts` or the simpler `pmetrics_txn` for usage examples.
+ *
+ * ## Functions
+ *
+ * **Counters**: pmetrics_increment_counter(), pmetrics_increment_counter_by().
+ * **Gauges**: pmetrics_set_gauge(), pmetrics_add_to_gauge().
+ * **Histograms**: pmetrics_record_to_histogram().
+ * **Utilities**: pmetrics_is_initialized(), pmetrics_is_enabled(),
+ * pmetrics_get_dsa(), pmetrics_clear_metrics().
  */
 
 #ifndef PMETRICS_H
