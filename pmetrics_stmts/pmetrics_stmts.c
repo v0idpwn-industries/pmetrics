@@ -60,8 +60,6 @@ PG_MODULE_MAGIC;
 #define LWTRANCHE_PMETRICS_QUERIES 1003
 
 #define MAX_QUERY_TEXT_LEN 1024 /* Max query text length we store */
-#define CLEANUP_INTERVAL_MS 3600000 /* Cleanup interval in milliseconds (1 hour) */
-#define CLEANUP_MAX_AGE_SECONDS 3600 /* Clean up queries older than this many seconds (1 hour) */
 
 /* Shared state stored in static shared memory */
 typedef struct PMetricsStmtsSharedState {
@@ -92,10 +90,16 @@ static int nesting_level = 0;
 #define DEFAULT_TRACK_TIMES true
 #define DEFAULT_TRACK_ROWS true
 #define DEFAULT_TRACK_BUFFERS false
+#define DEFAULT_CLEANUP_INTERVAL_SECONDS 86400 /* 24 hours */
+#define DEFAULT_CLEANUP_MAX_AGE_SECONDS 86400  /* 24 hours */
 
 static bool pmetrics_stmts_track_times = DEFAULT_TRACK_TIMES;
 static bool pmetrics_stmts_track_rows = DEFAULT_TRACK_ROWS;
 static bool pmetrics_stmts_track_buffers = DEFAULT_TRACK_BUFFERS;
+static int pmetrics_stmts_cleanup_interval_seconds =
+    DEFAULT_CLEANUP_INTERVAL_SECONDS;
+static int pmetrics_stmts_cleanup_max_age_seconds =
+    DEFAULT_CLEANUP_MAX_AGE_SECONDS;
 
 /* Query text storage structures */
 typedef struct {
@@ -241,6 +245,20 @@ void _PG_init(void)
 	    NULL, &pmetrics_stmts_track_buffers, DEFAULT_TRACK_BUFFERS, PGC_SIGHUP,
 	    0, NULL, NULL, NULL);
 
+	DefineCustomIntVariable(
+	    "pmetrics_stmts.cleanup_interval_seconds",
+	    "Interval between automatic cleanups (seconds, 0 to disable)", NULL,
+	    &pmetrics_stmts_cleanup_interval_seconds,
+	    DEFAULT_CLEANUP_INTERVAL_SECONDS, 0, INT_MAX, PGC_SIGHUP, GUC_UNIT_S,
+	    NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+	    "pmetrics_stmts.cleanup_max_age_seconds",
+	    "Clean up metrics for queries not executed in this many seconds", NULL,
+	    &pmetrics_stmts_cleanup_max_age_seconds,
+	    DEFAULT_CLEANUP_MAX_AGE_SECONDS, 1, INT_MAX, PGC_SIGHUP, GUC_UNIT_S,
+	    NULL, NULL, NULL);
+
 	MarkGUCPrefixReserved("pmetrics_stmts");
 
 	LWLockRegisterTranche(LWTRANCHE_PMETRICS_QUERIES, "pmetrics_queries");
@@ -269,7 +287,7 @@ void _PG_init(void)
 		worker.bgw_flags =
 		    BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
 		worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
-		worker.bgw_restart_time = 3600; /* Restart every hour */
+		worker.bgw_restart_time = 60; /* Restart after 60 seconds if crashed */
 		sprintf(worker.bgw_library_name, "pmetrics_stmts");
 		sprintf(worker.bgw_function_name, "pmetrics_stmts_cleanup_worker_main");
 		worker.bgw_notify_pid = 0;
@@ -672,17 +690,19 @@ pmetrics_stmts_cleanup_worker_main(Datum main_arg)
 	/* Connect to a database */
 	BackgroundWorkerInitializeConnection("postgres", NULL, 0);
 
-	/* DEBUG: Sleep to allow debugger attachment */
-	elog(LOG, "pmetrics_stmts cleanup worker PID %d - sleeping 30 seconds for debugger attach", MyProcPid);
-	pg_usleep(30000000L); /* 30 seconds */
-	elog(LOG, "pmetrics_stmts cleanup worker PID %d - continuing", MyProcPid);
-
 	while (!got_SIGTERM) {
 		int rc;
+		long interval_ms;
 
-		/* Wait for cleanup interval or until signaled */
-		rc = WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-		               CLEANUP_INTERVAL_MS, 0);
+		/* If cleanup is disabled (interval = 0), wait indefinitely */
+		if (pmetrics_stmts_cleanup_interval_seconds == 0) {
+			rc = WaitLatch(MyLatch, WL_LATCH_SET | WL_POSTMASTER_DEATH, -1, 0);
+		} else {
+			interval_ms = (long)pmetrics_stmts_cleanup_interval_seconds * 1000L;
+			rc = WaitLatch(MyLatch,
+			               WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
+			               interval_ms, 0);
+		}
 		ResetLatch(MyLatch);
 
 		/* Emergency bailout if postmaster has died */
@@ -693,19 +713,22 @@ pmetrics_stmts_cleanup_worker_main(Datum main_arg)
 		if (got_SIGTERM)
 			break;
 
-		/* Perform cleanup */
-		if (pmetrics_is_enabled()) {
+		/* Perform cleanup only if enabled and interval is not 0 */
+		if (pmetrics_is_enabled() &&
+		    pmetrics_stmts_cleanup_interval_seconds > 0) {
 			int64 cleaned_count = 0;
 
 			StartTransactionCommand();
 			PushActiveSnapshot(GetTransactionSnapshot());
 			PG_TRY();
 			{
-				cleaned_count = pmetrics_stmts_cleanup_old_metrics(CLEANUP_MAX_AGE_SECONDS);
+				cleaned_count = pmetrics_stmts_cleanup_old_metrics(
+				    pmetrics_stmts_cleanup_max_age_seconds);
 				PopActiveSnapshot();
 				CommitTransactionCommand();
 
-				elog(LOG, "pmetrics_stmts: cleaned up metrics for %ld queries", cleaned_count);
+				elog(LOG, "pmetrics_stmts: cleaned up metrics for %ld queries",
+				     cleaned_count);
 			}
 			PG_CATCH();
 			{

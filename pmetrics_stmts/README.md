@@ -72,6 +72,20 @@ CREATE EXTENSION pmetrics_stmts;
 - **Context**: PGC_SIGHUP (reload without restart)
 - **Description**: Enables or disables buffer usage tracking (shared blocks hit/read). When disabled, buffer metrics are not recorded. Disabled by default due to additional overhead.
 
+### pmetrics_stmts.cleanup_interval_seconds
+
+- **Type**: Integer
+- **Default**: `86400` (24 hours)
+- **Context**: PGC_SIGHUP (reload without restart)
+- **Description**: Interval in seconds between automatic cleanup runs. The background worker wakes up at this interval to remove metrics for queries that haven't been executed recently. Set to `0` to disable automatic cleanup entirely (manual cleanup via SQL still works).
+
+### pmetrics_stmts.cleanup_max_age_seconds
+
+- **Type**: Integer
+- **Default**: `86400` (24 hours)
+- **Context**: PGC_SIGHUP (reload without restart)
+- **Description**: Maximum age in seconds for inactive query metrics. During cleanup, metrics for queries that haven't been executed in this many seconds are removed from shared memory to prevent unbounded growth.
+
 ## Tracked Metrics
 
 The extension automatically creates histogram metrics for each unique query based on enabled tracking options:
@@ -85,6 +99,7 @@ Planning time in milliseconds, measured by the planner hook.
 **Controlled by**: `pmetrics_stmts.track_times`
 
 **Labels**:
+
 - `queryid`: PostgreSQL query identifier (uint64)
 - `userid`: User OID executing the query
 - `dbid`: Database OID
@@ -213,24 +228,37 @@ ORDER BY s.total_value DESC;
 
 ## Comparison with pg_stat_statements
 
-| Feature | pg_stat_statements | pmetrics_stmts |
-|---------|-------------------|----------------|
-| Metrics storage | In-memory stats | pmetrics histograms |
-| Distribution tracking | No (averages only) | Yes (full histogram) |
-| Percentile queries | No | Yes (via histogram buckets) |
-| Integration | Standalone | Requires pmetrics |
-| Query text normalization | Yes | No |
-| Memory overhead | Fixed pool | Dynamic (DSA) |
+| Feature                  | pg_stat_statements | pmetrics_stmts              |
+| ------------------------ | ------------------ | --------------------------- |
+| Metrics storage          | In-memory stats    | pmetrics histograms         |
+| Distribution tracking    | No (averages only) | Yes (full histogram)        |
+| Percentile queries       | No                 | Yes (via histogram buckets) |
+| Integration              | Standalone         | Requires pmetrics           |
+| Query text normalization | Yes                | No                          |
+| Memory overhead          | Fixed pool         | Dynamic (DSA)               |
 
 **Use pmetrics_stmts when**: You need distribution data (p50, p95, p99) or integration with broader pmetrics-based monitoring.
 
 **Use pg_stat_statements when**: You need normalized query text, plan fingerprinting, or minimal dependencies.
 
+## Automatic Cleanup
+
+The extension includes a background worker that periodically cleans up metrics for inactive queries to prevent unbounded memory growth.
+
+Cleanup behavior can be configured via:
+
+- `pmetrics_stmts.cleanup_interval_seconds`: How often cleanup runs (default: 86400 seconds)
+- `pmetrics_stmts.cleanup_max_age_seconds`: Age threshold for removal (default: 86400 seconds)
+
+Set `cleanup_interval_seconds` to `0` to disable automatic cleanup. You can still manually trigger cleanup:
+
+```sql
+SELECT pmetrics_stmts.cleanup_old_query_metrics(86400);  -- Remove queries inactive for 24 hours
+```
+
 ## Limitations
 
 - Query text truncated to 1024 bytes
-- No query text normalization (each query variant gets unique query ID)
-- No built-in cleanup; query texts persist until server restart
 - Requires pmetrics extension
 
 ## See Also
