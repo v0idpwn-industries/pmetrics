@@ -105,9 +105,9 @@ static void cleanup_metrics_backend(int code, Datum arg);
 static void validate_inputs(const char *name);
 static void init_metric_key(MetricKey *key, const char *name,
                             Jsonb *labels_jsonb, MetricType type, int bucket);
-static int pmetrics_bucket_for(double value);
-static Datum pmetrics_increment_by(const char *name_str, Jsonb *labels_jsonb,
-                                   MetricType type, int bucket, int64 amount);
+static int bucket_for(double value);
+static int64 increment_by(const char *name_str, Jsonb *labels_jsonb,
+                          MetricType type, int bucket, int64 amount);
 static void extract_metric_args(FunctionCallInfo fcinfo, int name_arg,
                                 int labels_arg, char **name_out,
                                 Jsonb **labels_out);
@@ -340,8 +340,8 @@ static dshash_table *get_metrics_table(void)
 	return local_metrics_table;
 }
 
-static Datum pmetrics_increment_by(const char *name_str, Jsonb *labels_jsonb,
-                                   MetricType type, int bucket, int64 amount)
+static int64 increment_by(const char *name_str, Jsonb *labels_jsonb,
+                          MetricType type, int bucket, int64 amount)
 {
 	Metric *entry;
 	MetricKey metric_key;
@@ -365,7 +365,7 @@ static Datum pmetrics_increment_by(const char *name_str, Jsonb *labels_jsonb,
 
 	dshash_release_lock(table, entry);
 
-	PG_RETURN_INT64(result);
+	return result;
 }
 
 PG_FUNCTION_INFO_V1(increment_counter);
@@ -381,8 +381,8 @@ Datum increment_counter(PG_FUNCTION_ARGS)
 	PG_TRY();
 	{
 		extract_metric_args(fcinfo, 0, 1, &name_str, &labels_jsonb);
-		new_value = pmetrics_increment_by(name_str, labels_jsonb,
-		                                  METRIC_TYPE_COUNTER, 0, 1);
+		new_value =
+		    increment_by(name_str, labels_jsonb, METRIC_TYPE_COUNTER, 0, 1);
 	}
 	PG_CATCH();
 	{
@@ -415,8 +415,8 @@ Datum increment_counter_by(PG_FUNCTION_ARGS)
 		if (increment <= 0)
 			elog(ERROR, "increment must be greater than 0");
 
-		new_value = pmetrics_increment_by(name_str, labels_jsonb,
-		                                  METRIC_TYPE_COUNTER, 0, increment);
+		new_value = increment_by(name_str, labels_jsonb, METRIC_TYPE_COUNTER, 0,
+		                         increment);
 	}
 	PG_CATCH();
 	{
@@ -480,8 +480,8 @@ Datum add_to_gauge(PG_FUNCTION_ARGS)
 		if (increment == 0)
 			elog(ERROR, "value can't be 0");
 
-		new_value = pmetrics_increment_by(name_str, labels_jsonb,
-		                                  METRIC_TYPE_GAUGE, 0, increment);
+		new_value = increment_by(name_str, labels_jsonb, METRIC_TYPE_GAUGE, 0,
+		                         increment);
 	}
 	PG_CATCH();
 	{
@@ -634,27 +634,19 @@ Datum list_metrics(PG_FUNCTION_ARGS)
 __attribute__((visibility("default"))) int64
 pmetrics_increment_counter(const char *name_str, Jsonb *labels_jsonb)
 {
-	Datum result;
-
 	validate_inputs(name_str);
-	result = pmetrics_increment_by(name_str, labels_jsonb, METRIC_TYPE_COUNTER,
-	                               0, 1);
-	return DatumGetInt64(result);
+	return increment_by(name_str, labels_jsonb, METRIC_TYPE_COUNTER, 0, 1);
 }
 
 __attribute__((visibility("default"))) int64 pmetrics_increment_counter_by(
     const char *name_str, Jsonb *labels_jsonb, int64 amount)
 {
-	Datum result;
-
 	validate_inputs(name_str);
 
 	if (amount <= 0)
 		elog(ERROR, "increment must be greater than 0");
 
-	result = pmetrics_increment_by(name_str, labels_jsonb, METRIC_TYPE_COUNTER,
-	                               0, amount);
-	return DatumGetInt64(result);
+	return increment_by(name_str, labels_jsonb, METRIC_TYPE_COUNTER, 0, amount);
 }
 
 __attribute__((visibility("default"))) int64
@@ -687,19 +679,15 @@ pmetrics_set_gauge(const char *name_str, Jsonb *labels_jsonb, int64 value)
 __attribute__((visibility("default"))) int64
 pmetrics_add_to_gauge(const char *name_str, Jsonb *labels_jsonb, int64 amount)
 {
-	Datum result;
-
 	validate_inputs(name_str);
 
 	if (amount == 0)
 		elog(ERROR, "value can't be 0");
 
-	result = pmetrics_increment_by(name_str, labels_jsonb, METRIC_TYPE_GAUGE, 0,
-	                               amount);
-	return DatumGetInt64(result);
+	return increment_by(name_str, labels_jsonb, METRIC_TYPE_GAUGE, 0, amount);
 }
 
-__attribute__((visibility("default"))) Datum pmetrics_record_histogram(
+__attribute__((visibility("default"))) int64 pmetrics_record_to_histogram(
     const char *name_str, Jsonb *labels_jsonb, double value)
 {
 	Datum bucket_count;
@@ -707,15 +695,15 @@ __attribute__((visibility("default"))) Datum pmetrics_record_histogram(
 
 	validate_inputs(name_str);
 
-	bucket = pmetrics_bucket_for(value);
+	bucket = bucket_for(value);
 
 	/* Increment the histogram bucket count */
-	bucket_count = pmetrics_increment_by(name_str, labels_jsonb,
-	                                     METRIC_TYPE_HISTOGRAM, bucket, 1);
+	bucket_count =
+	    increment_by(name_str, labels_jsonb, METRIC_TYPE_HISTOGRAM, bucket, 1);
 
 	/* Add to histogram sum (bucket is always 0 for sum type) */
-	pmetrics_increment_by(name_str, labels_jsonb, METRIC_TYPE_HISTOGRAM_SUM, 0,
-	                      (int64)value);
+	increment_by(name_str, labels_jsonb, METRIC_TYPE_HISTOGRAM_SUM, 0,
+	             (int64)value);
 
 	return bucket_count;
 }
@@ -723,7 +711,7 @@ __attribute__((visibility("default"))) Datum pmetrics_record_histogram(
 PG_FUNCTION_INFO_V1(record_to_histogram);
 Datum record_to_histogram(PG_FUNCTION_ARGS)
 {
-	Datum result;
+	int64 result;
 	Jsonb *labels_jsonb;
 	char *name_str = NULL;
 	double value;
@@ -735,8 +723,7 @@ Datum record_to_histogram(PG_FUNCTION_ARGS)
 	{
 		extract_metric_args(fcinfo, 0, 1, &name_str, &labels_jsonb);
 		value = PG_GETARG_FLOAT8(2);
-
-		result = pmetrics_record_histogram(name_str, labels_jsonb, value);
+		result = pmetrics_record_to_histogram(name_str, labels_jsonb, value);
 	}
 	PG_CATCH();
 	{
@@ -748,7 +735,7 @@ Datum record_to_histogram(PG_FUNCTION_ARGS)
 	PG_END_TRY();
 
 	pfree(name_str);
-	return result;
+	PG_RETURN_INT64(result);
 }
 
 PG_FUNCTION_INFO_V1(list_histogram_buckets);
@@ -868,7 +855,7 @@ __attribute__((visibility("default"))) bool pmetrics_is_enabled(void)
 	return pmetrics_enabled;
 }
 
-static int pmetrics_bucket_for(double value)
+static int bucket_for(double value)
 {
 	int bucket;
 	int this_bucket_upper_bound;
