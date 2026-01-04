@@ -24,15 +24,35 @@
 #include "optimizer/planner.h"
 #include "parser/analyze.h"
 #include "parser/scanner.h"
+#include "postmaster/bgworker.h"
 #include "storage/ipc.h"
 #include "storage/lwlock.h"
+#include "storage/proc.h"
 #include "storage/shmem.h"
 #include "utils/builtins.h"
 #include "utils/dsa.h"
 #include "utils/guc.h"
 #include "utils/jsonb.h"
+#include "utils/timestamp.h"
+#include "executor/spi.h"
+#include "tcop/utility.h"
+#include "access/htup_details.h"
+#include "catalog/pg_type_d.h"
+#include "pgstat.h"
+#include "access/xact.h"
 
 #include <stdio.h>
+
+/* Signal handling */
+static volatile sig_atomic_t got_SIGTERM = false;
+
+static void pmetrics_stmts_sigterm_handler(SIGNAL_ARGS)
+{
+	int save_errno = errno;
+	got_SIGTERM = true;
+	SetLatch(MyLatch);
+	errno = save_errno;
+}
 
 PG_MODULE_MAGIC;
 
@@ -70,10 +90,16 @@ static int nesting_level = 0;
 #define DEFAULT_TRACK_TIMES true
 #define DEFAULT_TRACK_ROWS true
 #define DEFAULT_TRACK_BUFFERS false
+#define DEFAULT_CLEANUP_INTERVAL_SECONDS 86400 /* 24 hours */
+#define DEFAULT_CLEANUP_MAX_AGE_SECONDS 86400  /* 24 hours */
 
 static bool pmetrics_stmts_track_times = DEFAULT_TRACK_TIMES;
 static bool pmetrics_stmts_track_rows = DEFAULT_TRACK_ROWS;
 static bool pmetrics_stmts_track_buffers = DEFAULT_TRACK_BUFFERS;
+static int pmetrics_stmts_cleanup_interval_seconds =
+    DEFAULT_CLEANUP_INTERVAL_SECONDS;
+static int pmetrics_stmts_cleanup_max_age_seconds =
+    DEFAULT_CLEANUP_MAX_AGE_SECONDS;
 
 /* Query text storage structures */
 typedef struct {
@@ -101,6 +127,12 @@ static PlannedStmt *pmetrics_stmts_planner_hook(Query *parse,
 static void pmetrics_stmts_ExecutorStart_hook(QueryDesc *queryDesc, int eflags);
 static void pmetrics_stmts_ExecutorEnd_hook(QueryDesc *queryDesc);
 static Jsonb *build_query_labels(uint64 queryid, Oid userid, Oid dbid);
+
+/* Background worker functions */
+void pmetrics_stmts_cleanup_worker_main(Datum main_arg);
+
+/* Cleanup function */
+int64 pmetrics_stmts_cleanup_old_metrics(int64 max_age_seconds);
 
 /* Query normalization functions (adapted from pg_stat_statements) */
 static int comp_location(const void *a, const void *b);
@@ -213,6 +245,20 @@ void _PG_init(void)
 	    NULL, &pmetrics_stmts_track_buffers, DEFAULT_TRACK_BUFFERS, PGC_SIGHUP,
 	    0, NULL, NULL, NULL);
 
+	DefineCustomIntVariable(
+	    "pmetrics_stmts.cleanup_interval_seconds",
+	    "Interval between automatic cleanups (seconds, 0 to disable)", NULL,
+	    &pmetrics_stmts_cleanup_interval_seconds,
+	    DEFAULT_CLEANUP_INTERVAL_SECONDS, 0, INT_MAX, PGC_SIGHUP, GUC_UNIT_S,
+	    NULL, NULL, NULL);
+
+	DefineCustomIntVariable(
+	    "pmetrics_stmts.cleanup_max_age_seconds",
+	    "Clean up metrics for queries not executed in this many seconds", NULL,
+	    &pmetrics_stmts_cleanup_max_age_seconds,
+	    DEFAULT_CLEANUP_MAX_AGE_SECONDS, 1, INT_MAX, PGC_SIGHUP, GUC_UNIT_S,
+	    NULL, NULL, NULL);
+
 	MarkGUCPrefixReserved("pmetrics_stmts");
 
 	LWLockRegisterTranche(LWTRANCHE_PMETRICS_QUERIES, "pmetrics_queries");
@@ -230,6 +276,24 @@ void _PG_init(void)
 	ExecutorStart_hook = pmetrics_stmts_ExecutorStart_hook;
 	prev_ExecutorEnd_hook = ExecutorEnd_hook;
 	ExecutorEnd_hook = pmetrics_stmts_ExecutorEnd_hook;
+
+	/* Register background worker for periodic cleanup */
+	{
+		BackgroundWorker worker;
+
+		memset(&worker, 0, sizeof(worker));
+		sprintf(worker.bgw_name, "pmetrics_stmts cleanup");
+		sprintf(worker.bgw_type, "pmetrics_stmts cleanup");
+		worker.bgw_flags =
+		    BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
+		worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
+		worker.bgw_restart_time = 60; /* Restart after 60 seconds if crashed */
+		sprintf(worker.bgw_library_name, "pmetrics_stmts");
+		sprintf(worker.bgw_function_name, "pmetrics_stmts_cleanup_worker_main");
+		worker.bgw_notify_pid = 0;
+
+		RegisterBackgroundWorker(&worker);
+	}
 }
 
 /*
@@ -380,6 +444,28 @@ Datum list_queries(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Helper function to extract queryid from JSONB labels.
+ * Returns the queryid as uint64, or 0 if not found.
+ */
+static uint64 extract_queryid_from_labels(Jsonb *labels)
+{
+	JsonbValue *queryid_val;
+	JsonbValue key;
+
+	key.type = jbvString;
+	key.val.string.val = "queryid";
+	key.val.string.len = strlen("queryid");
+
+	queryid_val = findJsonbValueFromContainer(&labels->root, JB_FOBJECT, &key);
+
+	if (queryid_val == NULL || queryid_val->type != jbvNumeric)
+		return 0;
+
+	return DatumGetInt64(DirectFunctionCall1(
+	    numeric_int8, NumericGetDatum(queryid_val->val.numeric)));
+}
+
+/*
  * Helper function to build JSONB labels for query tracking.
  * Returns a JSONB object with queryid, userid, and dbid.
  */
@@ -512,6 +598,19 @@ static void pmetrics_stmts_ExecutorStart_hook(QueryDesc *queryDesc, int eflags)
 			queryDesc->totaltime = InstrAlloc(1, INSTRUMENT_ALL, false);
 			MemoryContextSwitchTo(oldcxt);
 		}
+
+		/* Track query start timestamp */
+		{
+			uint64 queryid = queryDesc->plannedstmt->queryId;
+			Jsonb *labels_jsonb =
+			    build_query_labels(queryid, GetUserId(), MyDatabaseId);
+			TimestampTz now = GetCurrentTimestamp();
+			int64 timestamp_seconds = (int64)(timestamptz_to_time_t(now));
+			char metric_name[NAMEDATALEN];
+
+			snprintf(metric_name, NAMEDATALEN, "query_last_exec_timestamp");
+			pmetrics_set_gauge(metric_name, labels_jsonb, timestamp_seconds);
+		}
 	}
 }
 
@@ -597,6 +696,168 @@ static int comp_location(const void *a, const void *b)
 		return 1;
 	else
 		return 0;
+}
+
+/*
+ * Background worker main function for periodic cleanup
+ */
+
+__attribute__((visibility("default"))) void
+pmetrics_stmts_cleanup_worker_main(Datum main_arg)
+{
+	/* Set up signal handlers */
+	pqsignal(SIGTERM, pmetrics_stmts_sigterm_handler);
+	BackgroundWorkerUnblockSignals();
+
+	/* Connect to a database */
+	BackgroundWorkerInitializeConnection("postgres", NULL, 0);
+
+	while (!got_SIGTERM) {
+		int rc;
+		long interval_ms;
+
+		/* If cleanup is disabled (interval = 0), wait indefinitely */
+		if (pmetrics_stmts_cleanup_interval_seconds == 0) {
+			rc = WaitLatch(MyLatch, WL_LATCH_SET | WL_POSTMASTER_DEATH, -1, 0);
+		} else {
+			interval_ms = (long)pmetrics_stmts_cleanup_interval_seconds * 1000L;
+			rc = WaitLatch(MyLatch,
+			               WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
+			               interval_ms, 0);
+		}
+		ResetLatch(MyLatch);
+
+		/* Emergency bailout if postmaster has died */
+		if (rc & WL_POSTMASTER_DEATH)
+			proc_exit(1);
+
+		/* Process any signals received */
+		if (got_SIGTERM)
+			break;
+
+		/* Perform cleanup only if enabled and interval is not 0 */
+		if (pmetrics_is_enabled() &&
+		    pmetrics_stmts_cleanup_interval_seconds > 0) {
+			int64 cleaned_count = 0;
+
+			StartTransactionCommand();
+			PushActiveSnapshot(GetTransactionSnapshot());
+			PG_TRY();
+			{
+				cleaned_count = pmetrics_stmts_cleanup_old_metrics(
+				    pmetrics_stmts_cleanup_max_age_seconds);
+				PopActiveSnapshot();
+				CommitTransactionCommand();
+
+				elog(LOG, "pmetrics_stmts: cleaned up metrics for %ld queries",
+				     cleaned_count);
+			}
+			PG_CATCH();
+			{
+				PopActiveSnapshot();
+				AbortCurrentTransaction();
+				/* Log error but don't exit - we'll retry next iteration */
+				EmitErrorReport();
+				FlushErrorState();
+			}
+			PG_END_TRY();
+		}
+	}
+
+	proc_exit(0);
+}
+
+/*
+ * Clean up metrics for queries that haven't been executed in max_age_seconds
+ * Returns the number of queries whose metrics were cleaned up.
+ */
+int64 pmetrics_stmts_cleanup_old_metrics(int64 max_age_seconds)
+{
+	TimestampTz cutoff_time = TimestampTzPlusMilliseconds(
+	    GetCurrentTimestamp(), -max_age_seconds * 1000);
+	int64 cutoff_seconds = (int64)(timestamptz_to_time_t(cutoff_time));
+	char query_sql[512];
+	int ret;
+	int64 cleaned_queries = 0;
+
+	/* Find queries with last execution timestamp older than max_age_seconds */
+	snprintf(query_sql, sizeof(query_sql),
+	         "SELECT labels "
+	         "FROM pmetrics.list_metrics() "
+	         "WHERE name = 'query_last_exec_timestamp' AND value < %ld",
+	         cutoff_seconds);
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
+
+	ret = SPI_execute(query_sql, true, 0);
+
+	if (ret == SPI_OK_SELECT) {
+		for (int i = 0; i < SPI_processed; i++) {
+			HeapTuple tuple = SPI_tuptable->vals[i];
+			bool isnull;
+			Jsonb *labels_jsonb;
+			uint64 queryid;
+
+			/* Get the labels JSONB directly */
+			labels_jsonb = DatumGetJsonbP(
+			    SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull));
+			if (isnull)
+				continue;
+
+			/* Extract queryid for query text deletion */
+			queryid = extract_queryid_from_labels(labels_jsonb);
+			if (queryid == 0)
+				continue;
+
+			/* Delete all metrics for this query */
+			{
+				const char *metric_names[] = {
+				    "query_planning_time_ms",   "query_execution_time_ms",
+				    "query_rows_returned",      "query_shared_blocks_hit",
+				    "query_shared_blocks_read", "query_last_exec_timestamp"};
+				int num_metrics =
+				    sizeof(metric_names) / sizeof(metric_names[0]);
+
+				for (int j = 0; j < num_metrics; j++) {
+					pmetrics_delete_metric(metric_names[j], labels_jsonb);
+				}
+
+				/* Also delete the query text entry */
+				{
+					dshash_table *table = get_queries_table();
+					QueryTextKey key;
+					key.queryid = queryid;
+					dshash_delete_key(table, &key);
+				}
+			}
+		}
+	}
+
+	cleaned_queries = SPI_processed;
+
+	SPI_finish();
+
+	elog(DEBUG1, "pmetrics_stmts: cleaned up metrics for %ld old queries",
+	     cleaned_queries);
+
+	return cleaned_queries;
+}
+
+/*
+ * SQL wrapper function for cleanup
+ */
+PG_FUNCTION_INFO_V1(cleanup_old_query_metrics);
+Datum cleanup_old_query_metrics(PG_FUNCTION_ARGS)
+{
+	int64 max_age_seconds = PG_GETARG_INT64(0);
+	int64 cleaned_count;
+
+	if (!pmetrics_is_enabled())
+		PG_RETURN_NULL();
+
+	cleaned_count = pmetrics_stmts_cleanup_old_metrics(max_age_seconds);
+	PG_RETURN_INT64(cleaned_count);
 }
 
 /*

@@ -8,8 +8,6 @@
  * automatically as needed (no fixed limit).
  *
  * Each metric is uniquely identified by name, labels, type, and bucket.
- * Histogram buckets are stored as a field in the metric key, not as part
- * of the name, allowing full use of NAMEDATALEN for metric names.
  *
  * Accepts the following custom options:
  * - pmetrics.enabled: Enable metrics collection. Defaults to true.
