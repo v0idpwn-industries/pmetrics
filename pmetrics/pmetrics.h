@@ -21,7 +21,7 @@
  * **Gauges**: pmetrics_set_gauge(), pmetrics_add_to_gauge().
  * **Histograms**: pmetrics_record_to_histogram().
  * **Utilities**: pmetrics_is_initialized(), pmetrics_is_enabled(),
- * pmetrics_get_dsa(), pmetrics_clear_metrics().
+ * pmetrics_get_dsa(), pmetrics_clear_metrics(), pmetrics_delete_metric().
  */
 
 #ifndef PMETRICS_H
@@ -119,6 +119,17 @@ extern int64 pmetrics_record_to_histogram(const char *name_str,
  * @return Number of metrics deleted
  */
 extern int64 pmetrics_clear_metrics(void);
+
+/**
+ * Delete all metrics with the specified name and labels.
+ *
+ * Note: This can be an expensive operation as it iterates through all metrics.
+ *
+ * @param name_str Metric name
+ * @param labels_jsonb JSONB labels (can be NULL for empty object)
+ * @return Number of metrics deleted
+ */
+extern int64 pmetrics_delete_metric(const char *name_str, Jsonb *labels_jsonb);
 
 /**
  * Check if metrics collection is currently enabled.

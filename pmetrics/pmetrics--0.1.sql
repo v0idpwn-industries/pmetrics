@@ -52,6 +52,12 @@ CREATE FUNCTION list_histogram_buckets () RETURNS SETOF histogram_buckets_type A
  */
 CREATE FUNCTION clear_metrics () RETURNS BIGINT AS '$libdir/pmetrics' LANGUAGE C STRICT;
 
+/**
+ * Delete all metrics with the specified name and labels.
+ * Returns the number of metrics deleted, or NULL if pmetrics.enabled=false.
+ */
+CREATE FUNCTION delete_metric (name TEXT, labels JSONB) RETURNS BIGINT AS '$libdir/pmetrics' LANGUAGE C STRICT;
+
 -- Type documentation
 COMMENT ON TYPE metric_type IS 'Composite type representing a metric entry with name, labels, type, bucket (for histograms), and value';
 COMMENT ON TYPE histogram_buckets_type IS 'Composite type representing a histogram bucket upper bound';
@@ -80,3 +86,6 @@ COMMENT ON FUNCTION list_histogram_buckets() IS
 
 COMMENT ON FUNCTION clear_metrics() IS
 'Clear all metrics from shared memory. Returns the number of metrics deleted.';
+
+COMMENT ON FUNCTION delete_metric(TEXT, JSONB) IS
+'Delete all metrics with the specified name and labels. Returns the number of metrics deleted, or NULL if pmetrics.enabled=false.';

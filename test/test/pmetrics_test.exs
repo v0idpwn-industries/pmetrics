@@ -172,4 +172,34 @@ defmodule PmetricsTest do
       assert buckets == Enum.sort(buckets)
     end
   end
+
+  describe "delete_metric" do
+    test "deletes counter" do
+      query("SELECT pmetrics.increment_counter('test_counter', '{}'::jsonb)")
+      assert 1 = get_metric_value("test_counter", "counter")
+
+      result = query("SELECT pmetrics.delete_metric('test_counter', '{}'::jsonb)")
+      assert [[1]] = result.rows
+
+      assert is_nil(get_metric_value("test_counter", "counter"))
+    end
+
+    test "deletes all histogram metrics (buckets and sum)" do
+      query("SELECT pmetrics.record_to_histogram('response_time', '{}'::jsonb, 100.0)")
+      query("SELECT pmetrics.record_to_histogram('response_time', '{}'::jsonb, 200.0)")
+
+      # Should have bucket entries and sum
+      metrics = query("SELECT * FROM pmetrics.list_metrics() WHERE name = 'response_time'")
+      initial_count = length(metrics.rows)
+      assert initial_count > 1
+
+      result = query("SELECT pmetrics.delete_metric('response_time', '{}'::jsonb)")
+      [[deleted_count]] = result.rows
+      assert deleted_count == initial_count
+
+      # All should be gone
+      metrics = query("SELECT * FROM pmetrics.list_metrics() WHERE name = 'response_time'")
+      assert length(metrics.rows) == 0
+    end
+  end
 end

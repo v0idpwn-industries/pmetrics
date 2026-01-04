@@ -186,6 +186,14 @@ SELECT bucket FROM list_histogram_buckets() ORDER BY bucket;
 
 Returns all possible histogram bucket thresholds based on current configuration. Useful for histogram visualization.
 
+#### delete_metric(name, labels)
+
+```sql
+SELECT delete_metric('http_requests_total', '{"method": "GET"}');
+```
+
+Deletes all metrics with the specified name and labels. Returns the number of metrics deleted.
+
 #### clear_metrics()
 
 ```sql
