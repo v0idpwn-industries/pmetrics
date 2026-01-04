@@ -181,7 +181,7 @@ defmodule PmetricsTest do
       result = query("SELECT pmetrics.delete_metric('test_counter', '{}'::jsonb)")
       assert [[1]] = result.rows
 
-      assert nil = get_metric_value("test_counter", "counter")
+      assert is_nil(get_metric_value("test_counter", "counter"))
     end
 
     test "deletes all histogram metrics (buckets and sum)" do
