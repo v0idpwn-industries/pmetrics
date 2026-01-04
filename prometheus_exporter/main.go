@@ -23,12 +23,14 @@ type Config struct {
 }
 
 type Metric struct {
-	Name      string
-	Labels    map[string]interface{}
-	Type      string
-	Bucket    int
-	Value     int64
-	QueryText sql.NullString
+	Name         string
+	Labels       map[string]interface{}
+	Type         string
+	Bucket       int
+	Value        int64
+	QueryText    sql.NullString
+	DatabaseName sql.NullString
+	UserName     sql.NullString
 }
 
 func loadConfig() (*Config, error) {
@@ -116,10 +118,16 @@ func fetchMetrics(db *sql.DB) ([]Metric, []int, error) {
 			m.type,
 			m.bucket,
 			m.value,
-			q.query_text
+			q.query_text,
+			d.datname,
+			u.usename
 		FROM pmetrics.list_metrics() m
 		LEFT JOIN pmetrics_stmts.list_queries() q
 			ON (m.labels->>'queryid')::bigint = q.queryid
+		LEFT JOIN pg_database d
+			ON (m.labels->>'dbid')::oid = d.oid
+		LEFT JOIN pg_user u
+			ON (m.labels->>'userid')::oid = u.usesysid
 		ORDER BY m.name, m.type, m.labels::text, m.bucket
 	`
 
@@ -134,7 +142,7 @@ func fetchMetrics(db *sql.DB) ([]Metric, []int, error) {
 		var m Metric
 		var labelsJSON []byte
 
-		if err := rows.Scan(&m.Name, &labelsJSON, &m.Type, &m.Bucket, &m.Value, &m.QueryText); err != nil {
+		if err := rows.Scan(&m.Name, &labelsJSON, &m.Type, &m.Bucket, &m.Value, &m.QueryText, &m.DatabaseName, &m.UserName); err != nil {
 			return nil, nil, fmt.Errorf("failed to scan metric: %w", err)
 		}
 
@@ -149,13 +157,27 @@ func fetchMetrics(db *sql.DB) ([]Metric, []int, error) {
 			m.Labels = make(map[string]interface{})
 		}
 
+		// Replace queryid with query text if available
 		if m.QueryText.Valid && m.QueryText.String != "" {
 			compacted := compactQuery(m.QueryText.String)
 			// Truncate to fit Prometheus label size limits
 			if len(compacted) > 200 {
 				compacted = compacted[:200]
 			}
+			delete(m.Labels, "queryid")
 			m.Labels["query"] = compacted
+		}
+
+		// Replace dbid with database name if available
+		if m.DatabaseName.Valid && m.DatabaseName.String != "" {
+			delete(m.Labels, "dbid")
+			m.Labels["database"] = m.DatabaseName.String
+		}
+
+		// Replace userid with user name if available
+		if m.UserName.Valid && m.UserName.String != "" {
+			delete(m.Labels, "userid")
+			m.Labels["user"] = m.UserName.String
 		}
 
 		metrics = append(metrics, m)
