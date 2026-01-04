@@ -121,6 +121,22 @@ extern int64 pmetrics_record_to_histogram(const char *name_str,
 extern int64 pmetrics_clear_metrics(void);
 
 /**
+ * Delete all metrics with the specified name and labels.
+ *
+ * Deletes all metric types (counter, gauge, histogram buckets, histogram sum)
+ * that match the given name and labels combination. Frees associated DSA memory
+ * for labels.
+ *
+ * Note that this can be an expensive operation, as it needs to iterate through
+ * all metrics.
+ *
+ * @param name_str Metric name to match
+ * @param labels_jsonb JSONB labels to match (can be NULL for empty object)
+ * @return Number of metrics deleted
+ */
+extern int64 pmetrics_delete_metric(const char *name_str, Jsonb *labels_jsonb);
+
+/**
  * Check if metrics collection is currently enabled.
  * Returns the value of pmetrics.enabled configuration parameter.
  */

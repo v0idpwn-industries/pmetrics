@@ -123,6 +123,8 @@ static void init_metric_key(MetricKey *key, const char *name,
 static int bucket_for(double value);
 static int64 increment_by(const char *name_str, Jsonb *labels_jsonb,
                           MetricType type, int bucket, int64 amount);
+static int64 delete_metrics_by_name_labels(const char *name_str,
+                                           Jsonb *labels_jsonb);
 static void extract_metric_args(FunctionCallInfo fcinfo, int name_arg,
                                 int labels_arg, char **name_out,
                                 Jsonb **labels_out);
@@ -845,6 +847,87 @@ Datum clear_metrics(PG_FUNCTION_ARGS)
 
 	deleted_count = pmetrics_clear_metrics();
 
+	PG_RETURN_INT64(deleted_count);
+}
+
+static int64 delete_metrics_by_name_labels(const char *name_str,
+                                           Jsonb *labels_jsonb)
+{
+	dshash_table *metrics_table;
+	dshash_seq_status status;
+	Metric *entry;
+	int64 deleted_count = 0;
+	Jsonb *entry_labels;
+
+	metrics_table = get_metrics_table();
+	if (metrics_table == NULL)
+		elog(ERROR, "pmetrics not initialized");
+
+	dshash_seq_init(&status, metrics_table, true);
+	while ((entry = dshash_seq_next(&status)) != NULL) {
+		/* Check if name matches */
+		if (strcmp(entry->key.name, name_str) != 0)
+			continue;
+
+		/* Check if labels match */
+		entry_labels = get_labels_jsonb(&entry->key, local_dsa);
+
+		/* Compare labels - both NULL means match */
+		if (labels_jsonb == NULL && entry_labels == NULL) {
+			/* Both are NULL, they match */
+		} else if (labels_jsonb != NULL && entry_labels != NULL) {
+			/* Both exist, compare them */
+			if (compareJsonbContainers(&labels_jsonb->root,
+			                           &entry_labels->root) != 0)
+				continue;
+		} else {
+			/* One is NULL, the other isn't - no match */
+			continue;
+		}
+
+		/* Free DSA-allocated labels before deleting */
+		if (entry->key.labels_location == LABELS_DSA) {
+			dsa_free(local_dsa, entry->key.labels.dsa_ptr);
+		}
+		dshash_delete_current(&status);
+		deleted_count++;
+	}
+	dshash_seq_term(&status);
+
+	return deleted_count;
+}
+
+__attribute__((visibility("default"))) int64
+pmetrics_delete_metric(const char *name_str, Jsonb *labels_jsonb)
+{
+	validate_inputs(name_str);
+	return delete_metrics_by_name_labels(name_str, labels_jsonb);
+}
+
+PG_FUNCTION_INFO_V1(delete_metric);
+Datum delete_metric(PG_FUNCTION_ARGS)
+{
+	int64 deleted_count;
+	Jsonb *labels_jsonb;
+	char *name_str = NULL;
+
+	if (!pmetrics_enabled)
+		PG_RETURN_NULL();
+
+	PG_TRY();
+	{
+		extract_metric_args(fcinfo, 0, 1, &name_str, &labels_jsonb);
+		deleted_count = delete_metrics_by_name_labels(name_str, labels_jsonb);
+	}
+	PG_CATCH();
+	{
+		if (name_str)
+			pfree(name_str);
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+
+	pfree(name_str);
 	PG_RETURN_INT64(deleted_count);
 }
 
