@@ -54,7 +54,6 @@ static PMetricsStmtsSharedState *stmts_shared_state = NULL;
 /* Backend-local state (not in shared memory) */
 static dsa_area *local_dsa = NULL;
 static dshash_table *local_queries_table = NULL;
-static bool backend_attached = false;
 
 /* Hooks */
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
@@ -250,8 +249,6 @@ static void cleanup_pmetrics_stmts_backend(int code, Datum arg)
 	 */
 	local_dsa = NULL;
 
-	backend_attached = false;
-
 	elog(DEBUG1, "pmetrics_stmts: backend %d cleaned up", MyProcPid);
 }
 
@@ -299,7 +296,6 @@ static dshash_table *get_queries_table(void)
 
 	/* Register cleanup callback for when backend exits */
 	on_shmem_exit(cleanup_pmetrics_stmts_backend, 0);
-	backend_attached = true;
 
 	return local_queries_table;
 }
