@@ -7,10 +7,9 @@ PROJECT_BRIEF          = "PostgreSQL metrics instrumentation extension"
 OUTPUT_DIRECTORY       = docs
 
 # Input settings
-INPUT                  = pmetrics pmetrics/README.md
-FILE_PATTERNS          = *.c *.h *.md
+INPUT                  = pmetrics
+FILE_PATTERNS          = *.c *.h
 RECURSIVE              = YES
-USE_MDFILE_AS_MAINPAGE = pmetrics/README.md
 EXAMPLE_PATH           = examples
 
 # C-specific settings

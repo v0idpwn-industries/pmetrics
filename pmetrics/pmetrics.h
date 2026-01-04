@@ -1,8 +1,19 @@
-/*
- * pmetrics.h - Public API for pmetrics extension
+/**
+ * @file pmetrics.h
+ * @brief Public C API for pmetrics extension
  *
- * This header defines the public interface for other PostgreSQL extensions
- * to interact with pmetrics metrics collection system.
+ * @mainpage pmetrics C API
+ *
+ * Metrics collection for PostgreSQL extensions. Provides counters, gauges, and
+ * histograms with JSONB labels, stored in dynamic shared memory. The metrics
+ * are stored in a dshash.
+ *
+ * Load pmetrics **before dependent extensions** in shared_preload_libraries.
+ *
+ * Dependent extensions should check pmetrics_is_initialized() in their
+ * `shmem_startup` hook.
+ *
+ * Check `pmetrics_stmts` or the simpler `pmetrics_txn` for usage examples.
  */
 
 #ifndef PMETRICS_H
@@ -22,6 +33,7 @@ extern bool pmetrics_is_initialized(void);
  * Get the DSA handle for pmetrics' dynamic shared memory area.
  * This is useful for other extensions that need to store the handle
  * in their own shared state during startup.
+ *
  * Raises ERROR if pmetrics is not initialized.
  */
 extern dsa_handle pmetrics_get_dsa_handle(void);
