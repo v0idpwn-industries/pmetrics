@@ -54,8 +54,7 @@ CREATE FUNCTION clear_metrics () RETURNS BIGINT AS '$libdir/pmetrics' LANGUAGE C
 
 /**
  * Delete all metrics with the specified name and labels.
- * Returns the number of metrics deleted.
- * Deletes all metric types (counter, gauge, histogram buckets, histogram sum) that match.
+ * Returns the number of metrics deleted, or NULL if pmetrics.enabled=false.
  */
 CREATE FUNCTION delete_metric (name TEXT, labels JSONB) RETURNS BIGINT AS '$libdir/pmetrics' LANGUAGE C STRICT;
 
@@ -89,4 +88,4 @@ COMMENT ON FUNCTION clear_metrics() IS
 'Clear all metrics from shared memory. Returns the number of metrics deleted.';
 
 COMMENT ON FUNCTION delete_metric(TEXT, JSONB) IS
-'Delete all metrics with the specified name and labels. Returns the number of metrics deleted. Deletes all metric types (counter, gauge, histogram buckets, histogram sum) that match.';
+'Delete all metrics with the specified name and labels. Returns the number of metrics deleted, or NULL if pmetrics.enabled=false.';
