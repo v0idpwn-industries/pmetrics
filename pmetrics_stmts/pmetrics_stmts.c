@@ -24,15 +24,35 @@
 #include "optimizer/planner.h"
 #include "parser/analyze.h"
 #include "parser/scanner.h"
+#include "postmaster/bgworker.h"
 #include "storage/ipc.h"
 #include "storage/lwlock.h"
+#include "storage/proc.h"
 #include "storage/shmem.h"
 #include "utils/builtins.h"
 #include "utils/dsa.h"
 #include "utils/guc.h"
 #include "utils/jsonb.h"
+#include "utils/timestamp.h"
+#include "executor/spi.h"
+#include "tcop/utility.h"
+#include "access/htup_details.h"
+#include "catalog/pg_type_d.h"
+#include "pgstat.h"
+#include "access/xact.h"
 
 #include <stdio.h>
+
+/* Signal handling */
+static volatile sig_atomic_t got_SIGTERM = false;
+
+static void pmetrics_stmts_sigterm_handler(SIGNAL_ARGS)
+{
+	int save_errno = errno;
+	got_SIGTERM = true;
+	SetLatch(MyLatch);
+	errno = save_errno;
+}
 
 PG_MODULE_MAGIC;
 
@@ -40,6 +60,8 @@ PG_MODULE_MAGIC;
 #define LWTRANCHE_PMETRICS_QUERIES 1003
 
 #define MAX_QUERY_TEXT_LEN 1024 /* Max query text length we store */
+#define CLEANUP_INTERVAL_MS 3600000 /* Cleanup interval in milliseconds (1 hour) */
+#define CLEANUP_MAX_AGE_SECONDS 3600 /* Clean up queries older than this many seconds (1 hour) */
 
 /* Shared state stored in static shared memory */
 typedef struct PMetricsStmtsSharedState {
@@ -101,6 +123,12 @@ static PlannedStmt *pmetrics_stmts_planner_hook(Query *parse,
 static void pmetrics_stmts_ExecutorStart_hook(QueryDesc *queryDesc, int eflags);
 static void pmetrics_stmts_ExecutorEnd_hook(QueryDesc *queryDesc);
 static Jsonb *build_query_labels(uint64 queryid, Oid userid, Oid dbid);
+
+/* Background worker functions */
+void pmetrics_stmts_cleanup_worker_main(Datum main_arg);
+
+/* Cleanup function - can be called from C or SQL */
+int64 pmetrics_stmts_cleanup_old_metrics(int64 max_age_seconds);
 
 /* Query normalization functions (adapted from pg_stat_statements) */
 static int comp_location(const void *a, const void *b);
@@ -230,6 +258,24 @@ void _PG_init(void)
 	ExecutorStart_hook = pmetrics_stmts_ExecutorStart_hook;
 	prev_ExecutorEnd_hook = ExecutorEnd_hook;
 	ExecutorEnd_hook = pmetrics_stmts_ExecutorEnd_hook;
+
+	/* Register background worker for periodic cleanup */
+	{
+		BackgroundWorker worker;
+
+		memset(&worker, 0, sizeof(worker));
+		sprintf(worker.bgw_name, "pmetrics_stmts cleanup");
+		sprintf(worker.bgw_type, "pmetrics_stmts cleanup");
+		worker.bgw_flags =
+		    BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
+		worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
+		worker.bgw_restart_time = 3600; /* Restart every hour */
+		sprintf(worker.bgw_library_name, "pmetrics_stmts");
+		sprintf(worker.bgw_function_name, "pmetrics_stmts_cleanup_worker_main");
+		worker.bgw_notify_pid = 0;
+
+		RegisterBackgroundWorker(&worker);
+	}
 }
 
 /*
@@ -512,6 +558,19 @@ static void pmetrics_stmts_ExecutorStart_hook(QueryDesc *queryDesc, int eflags)
 			queryDesc->totaltime = InstrAlloc(1, INSTRUMENT_ALL, false);
 			MemoryContextSwitchTo(oldcxt);
 		}
+
+		/* Track query start timestamp */
+		{
+			uint64 queryid = queryDesc->plannedstmt->queryId;
+			Jsonb *labels_jsonb =
+			    build_query_labels(queryid, GetUserId(), MyDatabaseId);
+			TimestampTz now = GetCurrentTimestamp();
+			int64 timestamp_seconds = (int64)(timestamptz_to_time_t(now));
+			char metric_name[NAMEDATALEN];
+
+			snprintf(metric_name, NAMEDATALEN, "query_last_exec_timestamp");
+			pmetrics_set_gauge(metric_name, labels_jsonb, timestamp_seconds);
+		}
 	}
 }
 
@@ -597,6 +656,170 @@ static int comp_location(const void *a, const void *b)
 		return 1;
 	else
 		return 0;
+}
+
+/*
+ * Background worker main function for periodic cleanup
+ */
+
+__attribute__((visibility("default"))) void
+pmetrics_stmts_cleanup_worker_main(Datum main_arg)
+{
+	/* Set up signal handlers */
+	pqsignal(SIGTERM, pmetrics_stmts_sigterm_handler);
+	BackgroundWorkerUnblockSignals();
+
+	/* Connect to a database */
+	BackgroundWorkerInitializeConnection("postgres", NULL, 0);
+
+	/* DEBUG: Sleep to allow debugger attachment */
+	elog(LOG, "pmetrics_stmts cleanup worker PID %d - sleeping 30 seconds for debugger attach", MyProcPid);
+	pg_usleep(30000000L); /* 30 seconds */
+	elog(LOG, "pmetrics_stmts cleanup worker PID %d - continuing", MyProcPid);
+
+	while (!got_SIGTERM) {
+		int rc;
+
+		/* Wait for cleanup interval or until signaled */
+		rc = WaitLatch(MyLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
+		               CLEANUP_INTERVAL_MS, 0);
+		ResetLatch(MyLatch);
+
+		/* Emergency bailout if postmaster has died */
+		if (rc & WL_POSTMASTER_DEATH)
+			proc_exit(1);
+
+		/* Process any signals received */
+		if (got_SIGTERM)
+			break;
+
+		/* Perform cleanup */
+		if (pmetrics_is_enabled()) {
+			int64 cleaned_count = 0;
+
+			StartTransactionCommand();
+			PushActiveSnapshot(GetTransactionSnapshot());
+			PG_TRY();
+			{
+				cleaned_count = pmetrics_stmts_cleanup_old_metrics(CLEANUP_MAX_AGE_SECONDS);
+				PopActiveSnapshot();
+				CommitTransactionCommand();
+
+				elog(LOG, "pmetrics_stmts: cleaned up metrics for %ld queries", cleaned_count);
+			}
+			PG_CATCH();
+			{
+				PopActiveSnapshot();
+				AbortCurrentTransaction();
+				/* Log error but don't exit - we'll retry next iteration */
+				EmitErrorReport();
+				FlushErrorState();
+			}
+			PG_END_TRY();
+		}
+	}
+
+	proc_exit(0);
+}
+
+/*
+ * Clean up metrics for queries that haven't been executed in max_age_seconds
+ * Returns the number of queries whose metrics were cleaned up.
+ */
+int64 pmetrics_stmts_cleanup_old_metrics(int64 max_age_seconds)
+{
+	TimestampTz cutoff_time = TimestampTzPlusMilliseconds(
+	    GetCurrentTimestamp(), -max_age_seconds * 1000);
+	int64 cutoff_seconds = (int64)(timestamptz_to_time_t(cutoff_time));
+	char query_sql[512];
+	int ret;
+	uint64 queryid;
+	Oid userid, dbid;
+	int64 cleaned_queries = 0;
+
+	/* Find queries with last execution timestamp older than max_age_seconds */
+	snprintf(query_sql, sizeof(query_sql),
+	         "SELECT (labels->>'queryid')::bigint as queryid, "
+	         "(labels->>'userid')::oid as userid, "
+	         "(labels->>'dbid')::oid as dbid "
+	         "FROM pmetrics.list_metrics() "
+	         "WHERE name = 'query_last_exec_timestamp' AND value < %ld",
+	         cutoff_seconds);
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
+
+	ret = SPI_execute(query_sql, true, 0);
+
+	if (ret == SPI_OK_SELECT) {
+		for (int i = 0; i < SPI_processed; i++) {
+			HeapTuple tuple = SPI_tuptable->vals[i];
+			bool isnull;
+
+			queryid = DatumGetInt64(
+			    SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull));
+			if (isnull)
+				continue;
+
+			userid = DatumGetObjectId(
+			    SPI_getbinval(tuple, SPI_tuptable->tupdesc, 2, &isnull));
+			if (isnull)
+				continue;
+
+			dbid = DatumGetObjectId(
+			    SPI_getbinval(tuple, SPI_tuptable->tupdesc, 3, &isnull));
+			if (isnull)
+				continue;
+
+			/* Delete all metrics for this query */
+			{
+				Jsonb *labels_jsonb = build_query_labels(queryid, userid, dbid);
+				const char *metric_names[] = {
+				    "query_planning_time_ms",   "query_execution_time_ms",
+				    "query_rows_returned",      "query_shared_blocks_hit",
+				    "query_shared_blocks_read", "query_last_exec_timestamp"};
+				int num_metrics =
+				    sizeof(metric_names) / sizeof(metric_names[0]);
+
+				for (int j = 0; j < num_metrics; j++) {
+					pmetrics_delete_metric(metric_names[j], labels_jsonb);
+				}
+
+				/* Also delete the query text entry */
+				{
+					dshash_table *table = get_queries_table();
+					QueryTextKey key;
+					key.queryid = queryid;
+					dshash_delete_key(table, &key);
+				}
+			}
+		}
+	}
+
+	cleaned_queries = SPI_processed;
+
+	SPI_finish();
+
+	elog(DEBUG1, "pmetrics_stmts: cleaned up metrics for %ld old queries",
+	     cleaned_queries);
+
+	return cleaned_queries;
+}
+
+/*
+ * SQL wrapper function for cleanup
+ */
+PG_FUNCTION_INFO_V1(cleanup_old_query_metrics);
+Datum cleanup_old_query_metrics(PG_FUNCTION_ARGS)
+{
+	int64 max_age_seconds = PG_GETARG_INT64(0);
+	int64 cleaned_count;
+
+	if (!pmetrics_is_enabled())
+		PG_RETURN_NULL();
+
+	cleaned_count = pmetrics_stmts_cleanup_old_metrics(max_age_seconds);
+	PG_RETURN_INT64(cleaned_count);
 }
 
 /*

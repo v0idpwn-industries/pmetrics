@@ -249,4 +249,69 @@ defmodule PmetricsStmtsTest do
       assert length(result.rows) >= 1
     end
   end
+
+  describe "cleanup old metrics" do
+    test "cleanup_old_query_metrics removes old query metrics and text" do
+      # Create a temp table with a unique name (preserved in normalization!)
+      unique_suffix = :erlang.unique_integer([:positive])
+      table_name = "cleanup_test_table_#{unique_suffix}"
+
+      query("CREATE TEMP TABLE #{table_name} (id INT)")
+      query("SELECT * FROM #{table_name}")
+
+      # Find the queryid for our unique query
+      result =
+        query("""
+          SELECT queryid, query_text
+          FROM pmetrics_stmts.list_queries()
+          WHERE query_text LIKE '%#{table_name}%'
+          AND query_text NOT LIKE '%CREATE%'
+          LIMIT 1
+        """)
+
+      assert [[queryid, query_text]] = result.rows
+      assert String.contains?(query_text, table_name)
+
+      # Verify metrics exist for this query
+      result =
+        query("""
+          SELECT COUNT(*)
+          FROM pmetrics.list_metrics()
+          WHERE (labels->>'queryid')::bigint = #{queryid}
+          AND name = 'query_execution_time_ms'
+        """)
+
+      [[count_before]] = result.rows
+      assert Decimal.to_integer(count_before) > 0
+
+      # Sleep for 2 seconds to make the query "old"
+      Process.sleep(2000)
+
+      # Call cleanup function to remove queries older than 1 second
+      result = query("SELECT pmetrics_stmts.cleanup_old_query_metrics(1)")
+      [[cleaned_count]] = result.rows
+      assert Decimal.to_integer(cleaned_count) > 0
+
+      # Verify query text was removed
+      result =
+        query("""
+          SELECT queryid
+          FROM pmetrics_stmts.list_queries()
+          WHERE queryid = #{queryid}
+        """)
+
+      assert result.rows == []
+
+      # Verify metrics were removed
+      result =
+        query("""
+          SELECT COUNT(*)
+          FROM pmetrics.list_metrics()
+          WHERE (labels->>'queryid')::bigint = #{queryid}
+        """)
+
+      [[count_after]] = result.rows
+      assert Decimal.to_integer(count_after) == 0
+    end
+  end
 end
