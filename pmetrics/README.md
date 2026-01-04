@@ -2,6 +2,25 @@
 
 pmetrics is a PostgreSQL extension providing metrics collection infrastructure. It implements counters, gauges, and histograms with JSONB labels, stored in dynamic shared memory.
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Installation](#installation)
+  - [Building](#building)
+  - [Configuration](#configuration)
+- [Configuration Parameters](#configuration-parameters)
+  - [pmetrics.enabled](#pmetricsenabled)
+  - [pmetrics.bucket_variability](#pmetricsbucket_variability)
+  - [pmetrics.buckets_upper_bound](#pmetricsbuckets_upper_bound)
+- [SQL API](#sql-api)
+  - [Data Types](#data-types)
+  - [Counter Functions](#counter-functions)
+  - [Gauge Functions](#gauge-functions)
+  - [Histogram Functions](#histogram-functions)
+  - [Query Functions](#query-functions)
+- [C API](#c-api)
+- [Limitations](#limitations)
+
 ## Overview
 
 This extension provides a metrics framework for PostgreSQL extensions and stored procedures. Metrics are stored in dynamic shared memory using PostgreSQL's DSA and dshash APIs, with no predefined limits.
@@ -167,76 +186,19 @@ SELECT bucket FROM list_histogram_buckets() ORDER BY bucket;
 
 Returns all possible histogram bucket thresholds based on current configuration. Useful for histogram visualization.
 
+#### clear_metrics()
+
+```sql
+SELECT clear_metrics();
+```
+
+Clears all metrics from shared memory. Returns the number of metrics deleted. Useful for testing or resetting metrics state.
+
 ## C API
 
-The extension provides a public C API defined in `pmetrics.h`. Other extensions should include this header and link against pmetrics.
+The extension provides a public C API defined in `pmetrics.h` for use by other PostgreSQL extensions.
 
-### Public Functions
-
-```c
-/* Get DSA area (for extensions sharing the same DSA) */
-dsa_area *pmetrics_get_dsa(void);
-
-/* Increment a counter by 1 */
-int64 pmetrics_increment_counter(const char *name_str, Jsonb *labels_jsonb);
-
-/* Increment a counter by a specific amount */
-int64 pmetrics_increment_counter_by(const char *name_str, Jsonb *labels_jsonb,
-                                     int64 amount);
-
-/* Set a gauge to a specific value */
-int64 pmetrics_set_gauge(const char *name_str, Jsonb *labels_jsonb, int64 value);
-
-/* Add to a gauge (can be positive or negative) */
-int64 pmetrics_add_to_gauge(const char *name_str, Jsonb *labels_jsonb, int64 amount);
-
-/* Record a histogram value (automatically creates bucket and sum entries) */
-int64 pmetrics_record_to_histogram(const char *name_str, Jsonb *labels_jsonb,
-                                 double value);
-
-/* Check if metrics collection is enabled */
-bool pmetrics_is_enabled(void);
-```
-
-### Metric Types
-
-```c
-typedef enum MetricType {
-    METRIC_TYPE_COUNTER = 0,
-    METRIC_TYPE_GAUGE = 1,
-    METRIC_TYPE_HISTOGRAM = 2,
-    METRIC_TYPE_HISTOGRAM_SUM = 3
-} MetricType;
-```
-
-### Example Usage
-
-```c
-#include "extension/pmetrics/pmetrics.h"
-
-void record_custom_metrics(void)
-{
-    Jsonb *labels;
-
-    /* Build labels JSONB */
-    labels = build_my_labels();
-
-    /* Increment a counter */
-    pmetrics_increment_counter("requests_total", labels);
-
-    /* Increment counter by specific amount */
-    pmetrics_increment_counter_by("bytes_sent", labels, 1024);
-
-    /* Set a gauge */
-    pmetrics_set_gauge("active_connections", labels, 42);
-
-    /* Add to a gauge */
-    pmetrics_add_to_gauge("queue_depth", labels, -1);
-
-    /* Record histogram - automatically creates both bucket and sum entries */
-    pmetrics_record_to_histogram("custom_latency", labels, 123.45);
-}
-```
+Full C API documentation is available at: **https://v0idpwn-industries.github.io/pmetrics**
 
 ## Limitations
 
@@ -244,9 +206,3 @@ void record_custom_metrics(void)
 - Labels stored as JSONB; practical limit based on available DSA memory
 - Histogram values exceeding `pmetrics.buckets_upper_bound` clamped to last bucket
 - No built-in metric expiration or cleanup; metrics persist until server restart
-
-## See Also
-
-- `pmetrics_stmts`: Extension for automatic query performance tracking
-- PostgreSQL Dynamic Shared Memory documentation
-- DDSketch algorithm: https://arxiv.org/abs/1908.10693
