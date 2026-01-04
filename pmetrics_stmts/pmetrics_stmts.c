@@ -477,7 +477,7 @@ static PlannedStmt *pmetrics_stmts_planner_hook(Query *parse,
 		    build_query_labels(parse->queryId, GetUserId(), MyDatabaseId);
 
 		snprintf(metric_name, NAMEDATALEN, "query_planning_time_ms");
-		pmetrics_record_histogram(metric_name, labels_jsonb, elapsed_ms);
+		pmetrics_record_to_histogram(metric_name, labels_jsonb, elapsed_ms);
 	} else {
 		nesting_level++;
 		PG_TRY();
@@ -553,15 +553,16 @@ static void pmetrics_stmts_ExecutorEnd_hook(QueryDesc *queryDesc)
 		if (pmetrics_stmts_track_times) {
 			total_time_ms = queryDesc->totaltime->total * 1000.0;
 			snprintf(metric_name, NAMEDATALEN, "query_execution_time_ms");
-			pmetrics_record_histogram(metric_name, labels_jsonb, total_time_ms);
+			pmetrics_record_to_histogram(metric_name, labels_jsonb,
+			                             total_time_ms);
 		}
 
 		/* Track row count if enabled */
 		if (pmetrics_stmts_track_rows) {
 			rows_processed = queryDesc->estate->es_processed;
 			snprintf(metric_name, NAMEDATALEN, "query_rows_returned");
-			pmetrics_record_histogram(metric_name, labels_jsonb,
-			                          (double)rows_processed);
+			pmetrics_record_to_histogram(metric_name, labels_jsonb,
+			                             (double)rows_processed);
 		}
 
 		/* Track buffer usage if enabled */
@@ -569,12 +570,12 @@ static void pmetrics_stmts_ExecutorEnd_hook(QueryDesc *queryDesc)
 			BufferUsage *bufusage = &queryDesc->totaltime->bufusage;
 
 			snprintf(metric_name, NAMEDATALEN, "query_shared_blocks_hit");
-			pmetrics_record_histogram(metric_name, labels_jsonb,
-			                          (double)bufusage->shared_blks_hit);
+			pmetrics_record_to_histogram(metric_name, labels_jsonb,
+			                             (double)bufusage->shared_blks_hit);
 
 			snprintf(metric_name, NAMEDATALEN, "query_shared_blocks_read");
-			pmetrics_record_histogram(metric_name, labels_jsonb,
-			                          (double)bufusage->shared_blks_read);
+			pmetrics_record_to_histogram(metric_name, labels_jsonb,
+			                             (double)bufusage->shared_blks_read);
 		}
 	}
 

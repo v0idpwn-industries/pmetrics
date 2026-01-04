@@ -101,8 +101,8 @@ extern int64 pmetrics_add_to_gauge(const char *name_str, Jsonb *labels_jsonb,
  * @param value The value to record
  * @return Bucket count after recording
  */
-extern Datum pmetrics_record_histogram(const char *name_str,
-                                       Jsonb *labels_jsonb, double value);
+extern int64 pmetrics_record_to_histogram(const char *name_str,
+                                          Jsonb *labels_jsonb, double value);
 
 /**
  * Clear all metrics from the metrics table.

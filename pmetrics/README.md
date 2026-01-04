@@ -9,6 +9,7 @@ This extension provides a metrics framework for PostgreSQL extensions and stored
 Metrics can be recorded from PL/pgSQL functions via SQL or from C extensions via the public C API. All metrics are queryable via SQL.
 
 **Key features:**
+
 - Three metric types: counters, gauges, histograms
 - JSONB labels for multi-dimensional metrics
 - Exponential histogram bucketing (DDSketch-inspired)
@@ -134,6 +135,7 @@ SELECT record_to_histogram('query_duration_ms', '{"query_type": "select"}', 45.3
 ```
 
 Records a value to the histogram. Automatically creates two metric entries:
+
 - A `histogram` bucket entry with count incremented
 - A `histogram_sum` entry tracking cumulative sum
 
@@ -150,6 +152,7 @@ SELECT * FROM list_metrics() ORDER BY name, type, labels::text, bucket;
 ```
 
 Returns all metrics as rows. Each row contains:
+
 - `name`: Metric name (TEXT)
 - `labels`: JSONB object with labels
 - `type`: One of `counter`, `gauge`, `histogram`, `histogram_sum`
@@ -191,7 +194,7 @@ int64 pmetrics_set_gauge(const char *name_str, Jsonb *labels_jsonb, int64 value)
 int64 pmetrics_add_to_gauge(const char *name_str, Jsonb *labels_jsonb, int64 amount);
 
 /* Record a histogram value (automatically creates bucket and sum entries) */
-Datum pmetrics_record_histogram(const char *name_str, Jsonb *labels_jsonb,
+int64 pmetrics_record_to_histogram(const char *name_str, Jsonb *labels_jsonb,
                                  double value);
 
 /* Check if metrics collection is enabled */
@@ -234,7 +237,7 @@ void record_custom_metrics(void)
     pmetrics_add_to_gauge("queue_depth", labels, -1);
 
     /* Record histogram - automatically creates both bucket and sum entries */
-    pmetrics_record_histogram("custom_latency", labels, 123.45);
+    pmetrics_record_to_histogram("custom_latency", labels, 123.45);
 }
 ```
 
