@@ -444,6 +444,28 @@ Datum list_queries(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Helper function to extract queryid from JSONB labels.
+ * Returns the queryid as uint64, or 0 if not found.
+ */
+static uint64 extract_queryid_from_labels(Jsonb *labels)
+{
+	JsonbValue *queryid_val;
+	JsonbValue key;
+
+	key.type = jbvString;
+	key.val.string.val = "queryid";
+	key.val.string.len = strlen("queryid");
+
+	queryid_val = findJsonbValueFromContainer(&labels->root, JB_FOBJECT, &key);
+
+	if (queryid_val == NULL || queryid_val->type != jbvNumeric)
+		return 0;
+
+	return DatumGetInt64(DirectFunctionCall1(
+	    numeric_int8, NumericGetDatum(queryid_val->val.numeric)));
+}
+
+/*
  * Helper function to build JSONB labels for query tracking.
  * Returns a JSONB object with queryid, userid, and dbid.
  */
@@ -756,15 +778,11 @@ int64 pmetrics_stmts_cleanup_old_metrics(int64 max_age_seconds)
 	int64 cutoff_seconds = (int64)(timestamptz_to_time_t(cutoff_time));
 	char query_sql[512];
 	int ret;
-	uint64 queryid;
-	Oid userid, dbid;
 	int64 cleaned_queries = 0;
 
 	/* Find queries with last execution timestamp older than max_age_seconds */
 	snprintf(query_sql, sizeof(query_sql),
-	         "SELECT (labels->>'queryid')::bigint as queryid, "
-	         "(labels->>'userid')::oid as userid, "
-	         "(labels->>'dbid')::oid as dbid "
+	         "SELECT labels "
 	         "FROM pmetrics.list_metrics() "
 	         "WHERE name = 'query_last_exec_timestamp' AND value < %ld",
 	         cutoff_seconds);
@@ -778,25 +796,22 @@ int64 pmetrics_stmts_cleanup_old_metrics(int64 max_age_seconds)
 		for (int i = 0; i < SPI_processed; i++) {
 			HeapTuple tuple = SPI_tuptable->vals[i];
 			bool isnull;
+			Jsonb *labels_jsonb;
+			uint64 queryid;
 
-			queryid = DatumGetInt64(
+			/* Get the labels JSONB directly */
+			labels_jsonb = DatumGetJsonbP(
 			    SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull));
 			if (isnull)
 				continue;
 
-			userid = DatumGetObjectId(
-			    SPI_getbinval(tuple, SPI_tuptable->tupdesc, 2, &isnull));
-			if (isnull)
-				continue;
-
-			dbid = DatumGetObjectId(
-			    SPI_getbinval(tuple, SPI_tuptable->tupdesc, 3, &isnull));
-			if (isnull)
+			/* Extract queryid for query text deletion */
+			queryid = extract_queryid_from_labels(labels_jsonb);
+			if (queryid == 0)
 				continue;
 
 			/* Delete all metrics for this query */
 			{
-				Jsonb *labels_jsonb = build_query_labels(queryid, userid, dbid);
 				const char *metric_names[] = {
 				    "query_planning_time_ms",   "query_execution_time_ms",
 				    "query_rows_returned",      "query_shared_blocks_hit",
