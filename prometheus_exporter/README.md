@@ -8,6 +8,32 @@ This exporter translates pmetrics data structures (counters, gauges, histograms 
 
 When `pmetrics_stmts` is enabled, the exporter automatically joins query performance metrics with their corresponding query text, adding truncated query strings as labels for easier identification.
 
+## Label Transformations
+
+The exporter automatically replaces internal PostgreSQL identifiers with human-readable values for easier monitoring and alerting.
+
+### Reserved Labels
+
+The following labels are automatically replaced when the exporter detects them:
+
+| Original Label | Replacement | Source | Description |
+|---------------|-------------|---------|-------------|
+| `queryid` | `query` | `pmetrics_stmts.list_queries()` | Replaces numeric query ID with actual SQL query text (truncated to 200 chars) |
+| `dbid` | `database` | `pg_database.datname` | Replaces database OID with database name |
+| `userid` | `user` | `pg_user.usename` | Replaces user OID with username |
+
+**Example transformation:**
+
+Before (raw from pmetrics):
+```
+query_execution_time_ms{queryid="3248392847",dbid="16384",userid="10"} 150
+```
+
+After (exported to Prometheus):
+```
+query_execution_time_ms{query="SELECT * FROM users WHERE id = $1",database="myapp",user="appuser"} 150
+```
+
 ## Dependencies
 
 **Required for building**:
@@ -80,11 +106,11 @@ http_requests_total{method="POST",status="201"} 94
 active_connections{database="mydb"} 42
 
 # TYPE query_execution_time_ms histogram
-query_execution_time_ms_bucket{dbid="16384",queryid="3248392847",userid="10",query="SELECT * FROM users WHERE id = $1",le="1"} 245
-query_execution_time_ms_bucket{dbid="16384",queryid="3248392847",userid="10",query="SELECT * FROM users WHERE id = $1",le="2"} 489
-query_execution_time_ms_bucket{dbid="16384",queryid="3248392847",userid="10",query="SELECT * FROM users WHERE id = $1",le="+Inf"} 512
-query_execution_time_ms_count{dbid="16384",queryid="3248392847",userid="10",query="SELECT * FROM users WHERE id = $1"} 512
-query_execution_time_ms_sum{dbid="16384",queryid="3248392847",userid="10",query="SELECT * FROM users WHERE id = $1"} 687
+query_execution_time_ms_bucket{database="myapp",query="SELECT * FROM users WHERE id = $1",user="appuser",le="1"} 245
+query_execution_time_ms_bucket{database="myapp",query="SELECT * FROM users WHERE id = $1",user="appuser",le="2"} 489
+query_execution_time_ms_bucket{database="myapp",query="SELECT * FROM users WHERE id = $1",user="appuser",le="+Inf"} 512
+query_execution_time_ms_count{database="myapp",query="SELECT * FROM users WHERE id = $1",user="appuser"} 512
+query_execution_time_ms_sum{database="myapp",query="SELECT * FROM users WHERE id = $1",user="appuser"} 687
 ```
 
 ## Prometheus Configuration
