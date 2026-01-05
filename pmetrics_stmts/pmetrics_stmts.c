@@ -6,8 +6,9 @@
  *
  * Requires pmetrics to be loaded first via shared_preload_libraries.
  *
- * Most of this code is derived from PostgreSQL's contrib/pg_stat_statements.
- * Copyright (c) 2008-2025, PostgreSQL Global Development Group
+ * Portions of this code are derived from PostgreSQL's
+ * contrib/pg_stat_statements. Copyright (c) 2008-2025, PostgreSQL Global
+ * Development Group
  */
 
 #include "postgres.h"
@@ -688,17 +689,16 @@ static void pmetrics_stmts_ExecutorEnd_hook(QueryDesc *queryDesc)
 
 /*
  * Query normalization functions adapted from pg_stat_statements
- *
  * Copyright (c) 2008-2025, PostgreSQL Global Development Group
  *
- * These functions are adapted from
- * contrib/pg_stat_statements/pg_stat_statements.c to provide query
- * normalization (replacing constants with placeholders).
+ * The following functions (comp_location, fill_in_constant_lengths,
+ * generate_normalized_query) are copied from pg_stat_statements with
+ * the following adaptations:
+ * - Added PG_VERSION_NUM >= 180000 guards for fields added in PostgreSQL 18
+ *   (extern_param, has_squashed_lists, squashed) to maintain compatibility
+ *   with PostgreSQL 17
  */
 
-/*
- * Comparator for sorting locations (qsort comparator)
- */
 static int comp_location(const void *a, const void *b)
 {
 	int l = ((const LocationLen *)a)->location;
@@ -763,8 +763,8 @@ pmetrics_stmts_cleanup_worker_main(Datum main_arg)
 				PopActiveSnapshot();
 				CommitTransactionCommand();
 
-				elog(LOG, "pmetrics_stmts: cleaned up metrics for %ld queries",
-				     cleaned_count);
+				elog(LOG, "pmetrics_stmts: cleaned up metrics for %lld queries",
+				     (long long)cleaned_count);
 			}
 			PG_CATCH();
 			{
@@ -798,8 +798,8 @@ int64 pmetrics_stmts_cleanup_old_metrics(int64 max_age_seconds)
 	snprintf(query_sql, sizeof(query_sql),
 	         "SELECT labels "
 	         "FROM pmetrics.list_metrics() "
-	         "WHERE name = 'query_last_exec_timestamp' AND value < %ld",
-	         cutoff_seconds);
+	         "WHERE name = 'query_last_exec_timestamp' AND value < %lld",
+	         (long long)cutoff_seconds);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -852,8 +852,8 @@ int64 pmetrics_stmts_cleanup_old_metrics(int64 max_age_seconds)
 
 	SPI_finish();
 
-	elog(DEBUG1, "pmetrics_stmts: cleaned up metrics for %ld old queries",
-	     cleaned_queries);
+	elog(DEBUG1, "pmetrics_stmts: cleaned up metrics for %lld old queries",
+	     (long long)cleaned_queries);
 
 	return cleaned_queries;
 }
@@ -875,85 +875,23 @@ Datum cleanup_old_query_metrics(PG_FUNCTION_ARGS)
 }
 
 /*
- * Fill in constant lengths by scanning the query text.
- * Adapted from pg_stat_statements.
- */
-static void fill_in_constant_lengths(JumbleState *jstate, const char *query,
-                                     int query_loc)
-{
-	LocationLen *locs;
-	core_yyscan_t yyscanner;
-	core_yy_extra_type yyextra;
-	core_YYSTYPE yylval;
-	YYLTYPE yylloc;
-
-	/* Sort the records by location */
-	if (jstate->clocations_count > 1)
-		qsort(jstate->clocations, jstate->clocations_count, sizeof(LocationLen),
-		      comp_location);
-	locs = jstate->clocations;
-
-	/* Initialize the flex scanner */
-	yyscanner = scanner_init(query, &yyextra, &ScanKeywords, ScanKeywordTokens);
-
-	/* We don't want to re-emit any escape string warnings */
-	yyextra.escape_string_warning = false;
-
-	/* Search for each constant, in sequence */
-	for (int i = 0; i < jstate->clocations_count; i++) {
-		int loc;
-		int tok;
-
-		/* Ignore constants after the first one in the same location */
-		if (i > 0 && locs[i].location == locs[i - 1].location) {
-			locs[i].length = -1;
-			continue;
-		}
-
-		/* Adjust recorded location if we're dealing with partial string */
-		loc = locs[i].location - query_loc;
-		Assert(loc >= 0);
-
-		/* Lex tokens until we find the desired constant */
-		for (;;) {
-			tok = core_yylex(&yylval, &yylloc, yyscanner);
-
-			/* We should not hit end-of-string, but if we do, behave sanely */
-			if (tok == 0)
-				break;
-
-			/* If we run past it, work with that */
-			if (yylloc >= loc) {
-				if (query[loc] == '-') {
-					/*
-					 * It's a negative value - this is the one and only case
-					 * where we replace more than a single token.
-					 */
-					tok = core_yylex(&yylval, &yylloc, yyscanner);
-					if (tok == 0)
-						break;
-				}
-
-				/*
-				 * We now rely on the assumption that flex has placed a zero
-				 * byte after the text of the current token in scanbuf.
-				 */
-				locs[i].length = strlen(yyextra.scanbuf + loc);
-				break;
-			}
-		}
-
-		/* If we hit end-of-string, give up, leaving remaining lengths -1 */
-		if (tok == 0)
-			break;
-	}
-
-	scanner_finish(yyscanner);
-}
-
-/*
- * Generate a normalized query string from a JumbleState.
- * Adapted from pg_stat_statements.
+ * Generate a normalized version of the query string that will be used to
+ * represent all similar queries.
+ *
+ * Note that the normalized representation may well vary depending on
+ * just which "equivalent" query is used to create the hashtable entry.
+ * We assume this is OK.
+ *
+ * If query_loc > 0, then "query" has been advanced by that much compared to
+ * the original string start, so we need to translate the provided locations
+ * to compensate.  (This lets us avoid re-scanning statements before the one
+ * of interest, so it's worth doing.)
+ *
+ * *query_len_p contains the input string length, and is updated with
+ * the result string length on exit.  The resulting string might be longer
+ * or shorter depending on what happens with replacement of constants.
+ *
+ * Returns a palloc'd string.
  */
 static char *generate_normalized_query(JumbleState *jstate, const char *query,
                                        int query_loc, int *query_len_p)
@@ -968,13 +906,18 @@ static char *generate_normalized_query(JumbleState *jstate, const char *query,
 	    last_tok_len = 0;  /* Length (in bytes) of that tok */
 	int num_constants_replaced = 0;
 
-	/* Get constants' lengths (also ensures items are sorted by location) */
+	/*
+	 * Get constants' lengths (core system only gives us locations).  Note
+	 * this also ensures the items are sorted by location.
+	 */
 	fill_in_constant_lengths(jstate, query, query_loc);
 
 	/*
 	 * Allow for $n symbols to be longer than the constants they replace.
 	 * Constants must take at least one byte in text form, while a $n symbol
-	 * certainly isn't more than 11 bytes, even if n reaches INT_MAX.
+	 * certainly isn't more than 11 bytes, even if n reaches INT_MAX.  We
+	 * could refine that limit based on the max value of n for the current
+	 * query, but it hardly seems worth any extra effort to do so.
 	 */
 	norm_query_buflen = query_len + jstate->clocations_count * 10;
 
@@ -984,6 +927,18 @@ static char *generate_normalized_query(JumbleState *jstate, const char *query,
 	for (int i = 0; i < jstate->clocations_count; i++) {
 		int off,     /* Offset from start for cur tok */
 		    tok_len; /* Length (in bytes) of that tok */
+
+#if PG_VERSION_NUM >= 180000
+		/*
+		 * If we have an external param at this location, but no lists are
+		 * being squashed across the query, then we skip here; this will make
+		 * us print the characters found in the original query that represent
+		 * the parameter in the next iteration (or after the loop is done),
+		 * which is a bit odd but seems to work okay in most cases.
+		 */
+		if (jstate->clocations[i].extern_param && !jstate->has_squashed_lists)
+			continue;
+#endif
 
 		off = jstate->clocations[i].location;
 
@@ -1003,11 +958,19 @@ static char *generate_normalized_query(JumbleState *jstate, const char *query,
 		n_quer_loc += len_to_wrt;
 
 		/*
-		 * And insert a param symbol in place of the constant token.
+		 * And insert a param symbol in place of the constant token; and, if
+		 * we have a squashable list, insert a placeholder comment starting
+		 * from the list's second value.
 		 */
-		n_quer_loc += sprintf(norm_query + n_quer_loc, "$%d",
-		                      num_constants_replaced + 1 +
-		                          jstate->highest_extern_param_id);
+		n_quer_loc += sprintf(
+		    norm_query + n_quer_loc, "$%d%s",
+		    num_constants_replaced + 1 + jstate->highest_extern_param_id,
+#if PG_VERSION_NUM >= 180000
+		    jstate->clocations[i].squashed ? " /*, ... */" : ""
+#else
+		    ""
+#endif
+		);
 		num_constants_replaced++;
 
 		/* move forward */
@@ -1031,6 +994,127 @@ static char *generate_normalized_query(JumbleState *jstate, const char *query,
 
 	*query_len_p = n_quer_loc;
 	return norm_query;
+}
+
+/*
+ * Given a valid SQL string and an array of constant-location records,
+ * fill in the textual lengths of those constants.
+ *
+ * The constants may use any allowed constant syntax, such as float literals,
+ * bit-strings, single-quoted strings and dollar-quoted strings.  This is
+ * accomplished by using the public API for the core scanner.
+ *
+ * It is the caller's job to ensure that the string is a valid SQL statement
+ * with constants at the indicated locations.  Since in practice the string
+ * has already been parsed, and the locations that the caller provides will
+ * have originated from within the authoritative parser, this should not be
+ * a problem.
+ *
+ * Multiple constants can have the same location.  We reset lengths of those
+ * past the first to -1 so that they can later be ignored.
+ *
+ * If query_loc > 0, then "query" has been advanced by that much compared to
+ * the original string start, so we need to translate the provided locations
+ * to compensate.  (This lets us avoid re-scanning statements before the one
+ * of interest, so it's worth doing.)
+ *
+ * N.B. There is an assumption that a '-' character at a Const location begins
+ * a negative numeric constant.  This precludes there ever being another
+ * reason for a constant to start with a '-'.
+ */
+static void fill_in_constant_lengths(JumbleState *jstate, const char *query,
+                                     int query_loc)
+{
+	LocationLen *locs;
+	core_yyscan_t yyscanner;
+	core_yy_extra_type yyextra;
+	core_YYSTYPE yylval;
+	YYLTYPE yylloc;
+
+	/*
+	 * Sort the records by location so that we can process them in order while
+	 * scanning the query text.
+	 */
+	if (jstate->clocations_count > 1)
+		qsort(jstate->clocations, jstate->clocations_count, sizeof(LocationLen),
+		      comp_location);
+	locs = jstate->clocations;
+
+	/* initialize the flex scanner --- should match raw_parser() */
+	yyscanner = scanner_init(query, &yyextra, &ScanKeywords, ScanKeywordTokens);
+
+	/* we don't want to re-emit any escape string warnings */
+	yyextra.escape_string_warning = false;
+
+	/* Search for each constant, in sequence */
+	for (int i = 0; i < jstate->clocations_count; i++) {
+		int loc;
+		int tok;
+
+		/* Ignore constants after the first one in the same location */
+		if (i > 0 && locs[i].location == locs[i - 1].location) {
+			locs[i].length = -1;
+			continue;
+		}
+
+#if PG_VERSION_NUM >= 180000
+		if (locs[i].squashed)
+			continue; /* squashable list, ignore */
+#endif
+
+		/* Adjust recorded location if we're dealing with partial string */
+		loc = locs[i].location - query_loc;
+		Assert(loc >= 0);
+
+		/*
+		 * We have a valid location for a constant that's not a dupe. Lex
+		 * tokens until we find the desired constant.
+		 */
+		for (;;) {
+			tok = core_yylex(&yylval, &yylloc, yyscanner);
+
+			/* We should not hit end-of-string, but if we do, behave sanely */
+			if (tok == 0)
+				break; /* out of inner for-loop */
+
+			/*
+			 * We should find the token position exactly, but if we somehow
+			 * run past it, work with that.
+			 */
+			if (yylloc >= loc) {
+				if (query[loc] == '-') {
+					/*
+					 * It's a negative value - this is the one and only case
+					 * where we replace more than a single token.
+					 *
+					 * Do not compensate for the core system's special-case
+					 * adjustment of location to that of the leading '-'
+					 * operator in the event of a negative constant.  It is
+					 * also useful for our purposes to start from the minus
+					 * symbol.  In this way, queries like "select * from foo
+					 * where bar = 1" and "select * from foo where bar = -2"
+					 * will have identical normalized query strings.
+					 */
+					tok = core_yylex(&yylval, &yylloc, yyscanner);
+					if (tok == 0)
+						break; /* out of inner for-loop */
+				}
+
+				/*
+				 * We now rely on the assumption that flex has placed a zero
+				 * byte after the text of the current token in scanbuf.
+				 */
+				locs[i].length = strlen(yyextra.scanbuf + loc);
+				break; /* out of inner for-loop */
+			}
+		}
+
+		/* If we hit end-of-string, give up, leaving remaining lengths -1 */
+		if (tok == 0)
+			break;
+	}
+
+	scanner_finish(yyscanner);
 }
 
 /*
@@ -1060,6 +1144,11 @@ static void pmetrics_stmts_post_parse_analyze(ParseState *pstate, Query *query,
 	if (query->queryId == UINT64CONST(0) || pstate->p_sourcetext == NULL)
 		return;
 
+	/* Skip utility commands - they don't go through planner/executor hooks,
+	 * so they won't generate any metrics */
+	if (query->utilityStmt)
+		return;
+
 	/* Try to insert - only normalize if we actually need to insert */
 	table = get_queries_table();
 	if (table == NULL)
@@ -1079,20 +1168,12 @@ static void pmetrics_stmts_post_parse_analyze(ParseState *pstate, Query *query,
 	query_loc = query->stmt_location;
 	query_len = query->stmt_len;
 
-	/* Adjust for partial query strings */
-	if (query_loc >= 0) {
-		Assert(query_loc <= strlen(query_text));
-		query_text += query_loc;
-
-		if (query_len <= 0)
-			query_len = strlen(query_text);
-		else
-			Assert(query_len <= strlen(query_text));
-	} else {
-		/* If query location is unknown, use entire string */
-		query_loc = 0;
-		query_len = strlen(query_text);
-	}
+	/*
+	 * Confine our attention to the relevant part of the string, if the query
+	 * is a portion of a multi-statement source string, and update query
+	 * location and length if needed.
+	 */
+	query_text = CleanQuerytext(query_text, &query_loc, &query_len);
 
 	/* Generate normalized query if we have constant locations */
 	if (jstate && jstate->clocations_count > 0) {
@@ -1100,8 +1181,8 @@ static void pmetrics_stmts_post_parse_analyze(ParseState *pstate, Query *query,
 		int norm_query_len = query_len;
 		int text_len;
 
-		norm_query = generate_normalized_query(jstate, pstate->p_sourcetext,
-		                                       query_loc, &norm_query_len);
+		norm_query = generate_normalized_query(jstate, query_text, query_loc,
+		                                       &norm_query_len);
 
 		/* Copy normalized query into the entry */
 		text_len = norm_query_len;
