@@ -232,31 +232,54 @@ static void pmetrics_stmts_shmem_startup(void)
 
 void _PG_init(void)
 {
-	DefineCustomBoolVariable("pmetrics_stmts.track_times",
-	                         "Track query planning and execution times", NULL,
-	                         &pmetrics_stmts_track_times, DEFAULT_TRACK_TIMES,
-	                         PGC_SIGHUP, 0, NULL, NULL, NULL);
+	/*
+	 * Must be loaded via shared_preload_libraries since we allocate shared
+	 * memory and register hooks. Fail if loaded any other way.
+	 */
+	if (!process_shared_preload_libraries_in_progress)
+		ereport(ERROR, (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+		                errmsg("pmetrics_stmts must be loaded via "
+		                       "shared_preload_libraries")));
+
+	DefineCustomBoolVariable(
+	    "pmetrics_stmts.track_times",
+	    "Track query planning and execution times",
+	    "Records query_planning_time_ms and query_execution_time_ms histograms "
+	    "for each query",
+	    &pmetrics_stmts_track_times, DEFAULT_TRACK_TIMES, PGC_SIGHUP, 0, NULL,
+	    NULL, NULL);
 
 	DefineCustomBoolVariable("pmetrics_stmts.track_rows",
-	                         "Track query row counts", NULL,
+	                         "Track query row counts",
+	                         "Records query_rows_returned histogram for number "
+	                         "of rows returned by each query",
 	                         &pmetrics_stmts_track_rows, DEFAULT_TRACK_ROWS,
 	                         PGC_SIGHUP, 0, NULL, NULL, NULL);
 
 	DefineCustomBoolVariable(
 	    "pmetrics_stmts.track_buffers", "Track buffer usage distributions",
-	    NULL, &pmetrics_stmts_track_buffers, DEFAULT_TRACK_BUFFERS, PGC_SIGHUP,
-	    0, NULL, NULL, NULL);
+	    "Records query_shared_blocks_hit and query_shared_blocks_read "
+	    "histograms",
+	    &pmetrics_stmts_track_buffers, DEFAULT_TRACK_BUFFERS, PGC_SIGHUP, 0,
+	    NULL, NULL, NULL);
 
 	DefineCustomIntVariable(
 	    "pmetrics_stmts.cleanup_interval_seconds",
-	    "Interval between automatic cleanups (seconds, 0 to disable)", NULL,
+	    "Interval between automatic cleanups (seconds, 0 to disable)",
+	    "Background worker runs cleanup at this interval to remove old query "
+	    "metrics. "
+	    "Set to 0 to disable automatic cleanup (manual cleanup still available "
+	    "via SQL).",
 	    &pmetrics_stmts_cleanup_interval_seconds,
 	    DEFAULT_CLEANUP_INTERVAL_SECONDS, 0, MAX_CLEANUP_INTERVAL_SECONDS,
 	    PGC_SIGHUP, GUC_UNIT_S, NULL, NULL, NULL);
 
 	DefineCustomIntVariable(
 	    "pmetrics_stmts.cleanup_max_age_seconds",
-	    "Clean up metrics for queries not executed in this many seconds", NULL,
+	    "Clean up metrics for queries not executed in this many seconds",
+	    "Metrics for queries that haven't been executed within this time "
+	    "period "
+	    "will be removed during automatic cleanup.",
 	    &pmetrics_stmts_cleanup_max_age_seconds,
 	    DEFAULT_CLEANUP_MAX_AGE_SECONDS, 1, MAX_CLEANUP_MAX_AGE_SECONDS,
 	    PGC_SIGHUP, GUC_UNIT_S, NULL, NULL, NULL);
