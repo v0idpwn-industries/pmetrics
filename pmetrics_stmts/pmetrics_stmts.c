@@ -6,7 +6,7 @@
  *
  * Requires pmetrics to be loaded first via shared_preload_libraries.
  *
- * Most of this code is derived from PostgreSQL's contrib/pg_stat_statements.
+ * Portions of this code are derived from PostgreSQL's contrib/pg_stat_statements.
  * Copyright (c) 2008-2025, PostgreSQL Global Development Group
  */
 
