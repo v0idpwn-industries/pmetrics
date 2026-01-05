@@ -1046,6 +1046,11 @@ static void pmetrics_stmts_post_parse_analyze(ParseState *pstate, Query *query,
 	if (query->queryId == UINT64CONST(0) || pstate->p_sourcetext == NULL)
 		return;
 
+	/* Skip utility commands - they don't go through planner/executor hooks,
+	 * so they won't generate any metrics */
+	if (query->utilityStmt)
+		return;
+
 	/* Try to insert - only normalize if we actually need to insert */
 	table = get_queries_table();
 	if (table == NULL)
