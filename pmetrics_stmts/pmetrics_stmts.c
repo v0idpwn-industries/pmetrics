@@ -92,6 +92,8 @@ static int nesting_level = 0;
 #define DEFAULT_TRACK_BUFFERS false
 #define DEFAULT_CLEANUP_INTERVAL_SECONDS 86400 /* 24 hours */
 #define DEFAULT_CLEANUP_MAX_AGE_SECONDS 86400  /* 24 hours */
+#define MAX_CLEANUP_INTERVAL_SECONDS 2592000   /* 30 days */
+#define MAX_CLEANUP_MAX_AGE_SECONDS 2592000    /* 30 days, prevents overflow  */
 
 static bool pmetrics_stmts_track_times = DEFAULT_TRACK_TIMES;
 static bool pmetrics_stmts_track_rows = DEFAULT_TRACK_ROWS;
@@ -249,15 +251,15 @@ void _PG_init(void)
 	    "pmetrics_stmts.cleanup_interval_seconds",
 	    "Interval between automatic cleanups (seconds, 0 to disable)", NULL,
 	    &pmetrics_stmts_cleanup_interval_seconds,
-	    DEFAULT_CLEANUP_INTERVAL_SECONDS, 0, INT_MAX, PGC_SIGHUP, GUC_UNIT_S,
-	    NULL, NULL, NULL);
+	    DEFAULT_CLEANUP_INTERVAL_SECONDS, 0, MAX_CLEANUP_INTERVAL_SECONDS,
+	    PGC_SIGHUP, GUC_UNIT_S, NULL, NULL, NULL);
 
 	DefineCustomIntVariable(
 	    "pmetrics_stmts.cleanup_max_age_seconds",
 	    "Clean up metrics for queries not executed in this many seconds", NULL,
 	    &pmetrics_stmts_cleanup_max_age_seconds,
-	    DEFAULT_CLEANUP_MAX_AGE_SECONDS, 1, INT_MAX, PGC_SIGHUP, GUC_UNIT_S,
-	    NULL, NULL, NULL);
+	    DEFAULT_CLEANUP_MAX_AGE_SECONDS, 1, MAX_CLEANUP_MAX_AGE_SECONDS,
+	    PGC_SIGHUP, GUC_UNIT_S, NULL, NULL, NULL);
 
 	MarkGUCPrefixReserved("pmetrics_stmts");
 
@@ -515,32 +517,37 @@ static PlannedStmt *pmetrics_stmts_planner_hook(Query *parse,
 {
 	PlannedStmt *result;
 	instr_time start_time, end_time;
-	double elapsed_ms;
-	Jsonb *labels_jsonb;
-	char metric_name[NAMEDATALEN];
+	bool should_track;
 
 	/* Track metrics only if both pmetrics and track_times are enabled, and
 	 * at top level */
-	if (pmetrics_is_enabled() && pmetrics_stmts_track_times &&
-	    nesting_level == 0 && query_string &&
-	    parse->queryId != UINT64CONST(0)) {
+	should_track = pmetrics_is_enabled() && pmetrics_stmts_track_times &&
+	               nesting_level == 0 && query_string &&
+	               parse->queryId != UINT64CONST(0);
+
+	if (should_track)
 		INSTR_TIME_SET_CURRENT(start_time);
 
-		nesting_level++;
-		PG_TRY();
-		{
-			if (prev_planner_hook)
-				result = prev_planner_hook(parse, query_string, cursorOptions,
-				                           boundParams);
-			else
-				result = standard_planner(parse, query_string, cursorOptions,
-				                          boundParams);
-		}
-		PG_FINALLY();
-		{
-			nesting_level--;
-		}
-		PG_END_TRY();
+	nesting_level++;
+	PG_TRY();
+	{
+		if (prev_planner_hook)
+			result = prev_planner_hook(parse, query_string, cursorOptions,
+			                           boundParams);
+		else
+			result = standard_planner(parse, query_string, cursorOptions,
+			                          boundParams);
+	}
+	PG_FINALLY();
+	{
+		nesting_level--;
+	}
+	PG_END_TRY();
+
+	if (should_track) {
+		double elapsed_ms;
+		Jsonb *labels_jsonb;
+		char metric_name[NAMEDATALEN];
 
 		INSTR_TIME_SET_CURRENT(end_time);
 		INSTR_TIME_SUBTRACT(end_time, start_time);
@@ -552,22 +559,6 @@ static PlannedStmt *pmetrics_stmts_planner_hook(Query *parse,
 
 		snprintf(metric_name, NAMEDATALEN, "query_planning_time_ms");
 		pmetrics_record_to_histogram(metric_name, labels_jsonb, elapsed_ms);
-	} else {
-		nesting_level++;
-		PG_TRY();
-		{
-			if (prev_planner_hook)
-				result = prev_planner_hook(parse, query_string, cursorOptions,
-				                           boundParams);
-			else
-				result = standard_planner(parse, query_string, cursorOptions,
-				                          boundParams);
-		}
-		PG_FINALLY();
-		{
-			nesting_level--;
-		}
-		PG_END_TRY();
 	}
 
 	return result;

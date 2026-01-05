@@ -76,6 +76,7 @@ CREATE EXTENSION pmetrics_stmts;
 
 - **Type**: Integer
 - **Default**: `86400` (24 hours)
+- **Range**: `0` to `2592000` (30 days)
 - **Context**: PGC_SIGHUP (reload without restart)
 - **Description**: Interval in seconds between automatic cleanup runs. The background worker wakes up at this interval to remove metrics for queries that haven't been executed recently. Set to `0` to disable automatic cleanup entirely (manual cleanup via SQL still works).
 
@@ -83,6 +84,7 @@ CREATE EXTENSION pmetrics_stmts;
 
 - **Type**: Integer
 - **Default**: `86400` (24 hours)
+- **Range**: `1` to `2592000` (30 days)
 - **Context**: PGC_SIGHUP (reload without restart)
 - **Description**: Maximum age in seconds for inactive query metrics. During cleanup, metrics for queries that haven't been executed in this many seconds are removed from shared memory to prevent unbounded growth.
 
