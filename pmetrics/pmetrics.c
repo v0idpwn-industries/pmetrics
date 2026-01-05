@@ -198,22 +198,35 @@ void _PG_init(void)
 {
 	int max_bucket_exp;
 
-	DefineCustomBoolVariable("pmetrics.enabled", "Metrics collection enabled",
-	                         NULL, &pmetrics_enabled, DEFAULT_ENABLED,
-	                         PGC_SIGHUP, 0, NULL, NULL, NULL);
+	/*
+	 * Must be loaded via shared_preload_libraries since we allocate shared
+	 * memory and register hooks. Fail if loaded any other way.
+	 */
+	if (!process_shared_preload_libraries_in_progress)
+		ereport(
+		    ERROR,
+		    (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+		     errmsg("pmetrics must be loaded via shared_preload_libraries")));
 
-	DefineCustomRealVariable(
-	    "pmetrics.bucket_variability", "Bucket variability for histograms",
-	    "Used to calculate bucket boundaries. Bigger = less buckets.",
-	    &bucket_variability, DEFAULT_BUCKET_VARIABILITY, 0.01, 1.0,
-	    PGC_POSTMASTER, 0, NULL, NULL, NULL);
+	DefineCustomBoolVariable(
+	    "pmetrics.enabled", "Enable metrics collection",
+	    "When disabled, all metric recording functions return NULL immediately",
+	    &pmetrics_enabled, DEFAULT_ENABLED, PGC_SIGHUP, 0, NULL, NULL, NULL);
+
+	DefineCustomRealVariable("pmetrics.bucket_variability",
+	                         "Bucket variability for histograms",
+	                         "Controls histogram bucket spacing. Higher values "
+	                         "create fewer, wider buckets. "
+	                         "Used to calculate gamma = (1 + variability) / (1 "
+	                         "- variability). Requires restart.",
+	                         &bucket_variability, DEFAULT_BUCKET_VARIABILITY,
+	                         0.01, 1.0, PGC_POSTMASTER, 0, NULL, NULL, NULL);
 
 	DefineCustomIntVariable(
 	    "pmetrics.buckets_upper_bound", "Maximum value for histogram buckets",
-	    "Values bigger than this will be stored in the last bucket. The actual "
-	    "value will probably be bigger than the configuration value, as it "
-	    "goes "
-	    "to the nearest upper bucket",
+	    "Values larger than this will be placed in the highest bucket. "
+	    "The actual upper bound will be rounded up to the nearest bucket "
+	    "boundary. Requires restart.",
 	    &buckets_upper_bound, DEFAULT_BUCKETS_UPPER_BOUND, 1, INT_MAX,
 	    PGC_POSTMASTER, 0, NULL, NULL, NULL);
 
