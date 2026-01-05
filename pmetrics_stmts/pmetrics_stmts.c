@@ -58,7 +58,7 @@ static void pmetrics_stmts_sigterm_handler(SIGNAL_ARGS)
 PG_MODULE_MAGIC;
 
 /* LWLock tranche ID for queries table */
-#define LWTRANCHE_PMETRICS_QUERIES 1003
+#define LWTRANCHE_PMETRICS_QUERIES 43003
 
 #define MAX_QUERY_TEXT_LEN 1024 /* Max query text length we store */
 

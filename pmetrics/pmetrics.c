@@ -44,8 +44,8 @@
 PG_MODULE_MAGIC;
 
 /* LWLock tranche IDs (must not conflict with other extensions) */
-#define LWTRANCHE_PMETRICS_DSA 1001
-#define LWTRANCHE_PMETRICS 1002
+#define LWTRANCHE_PMETRICS_DSA 43001
+#define LWTRANCHE_PMETRICS 43002
 
 /* GUC defaults */
 #define DEFAULT_ENABLED true
