@@ -13,7 +13,7 @@ jobs:
 
     strategy:
       matrix:
-        postgres: [17]
+        postgres: [17, 18]
 
     steps:
       - name: Checkout code
@@ -67,9 +67,9 @@ jobs:
             if [ $i -eq 30 ]; then
               echo "ERROR: PostgreSQL failed to start after 30 seconds"
               echo "=== systemd logs ==="
-              sudo journalctl -u postgresql@17-main --no-pager -n 50
+              sudo journalctl -u postgresql@${{ matrix.postgres }}-main --no-pager -n 50
               echo "=== PostgreSQL error logs ==="
-              sudo tail -100 /var/log/postgresql/postgresql-17-main.log
+              sudo tail -100 /var/log/postgresql/postgresql-${{ matrix.postgres }}-main.log
               exit 1
             fi
             echo "Waiting for PostgreSQL to be ready... ($i/30)"
