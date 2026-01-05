@@ -92,6 +92,8 @@ static int nesting_level = 0;
 #define DEFAULT_TRACK_BUFFERS false
 #define DEFAULT_CLEANUP_INTERVAL_SECONDS 86400 /* 24 hours */
 #define DEFAULT_CLEANUP_MAX_AGE_SECONDS 86400  /* 24 hours */
+#define MAX_CLEANUP_INTERVAL_SECONDS 2592000   /* 30 days */
+#define MAX_CLEANUP_MAX_AGE_SECONDS 2592000    /* 30 days, prevents overflow  */
 
 static bool pmetrics_stmts_track_times = DEFAULT_TRACK_TIMES;
 static bool pmetrics_stmts_track_rows = DEFAULT_TRACK_ROWS;
@@ -249,15 +251,15 @@ void _PG_init(void)
 	    "pmetrics_stmts.cleanup_interval_seconds",
 	    "Interval between automatic cleanups (seconds, 0 to disable)", NULL,
 	    &pmetrics_stmts_cleanup_interval_seconds,
-	    DEFAULT_CLEANUP_INTERVAL_SECONDS, 0, INT_MAX, PGC_SIGHUP, GUC_UNIT_S,
-	    NULL, NULL, NULL);
+	    DEFAULT_CLEANUP_INTERVAL_SECONDS, 0, MAX_CLEANUP_INTERVAL_SECONDS,
+	    PGC_SIGHUP, GUC_UNIT_S, NULL, NULL, NULL);
 
 	DefineCustomIntVariable(
 	    "pmetrics_stmts.cleanup_max_age_seconds",
 	    "Clean up metrics for queries not executed in this many seconds", NULL,
 	    &pmetrics_stmts_cleanup_max_age_seconds,
-	    DEFAULT_CLEANUP_MAX_AGE_SECONDS, 1, INT_MAX, PGC_SIGHUP, GUC_UNIT_S,
-	    NULL, NULL, NULL);
+	    DEFAULT_CLEANUP_MAX_AGE_SECONDS, 1, MAX_CLEANUP_MAX_AGE_SECONDS,
+	    PGC_SIGHUP, GUC_UNIT_S, NULL, NULL, NULL);
 
 	MarkGUCPrefixReserved("pmetrics_stmts");
 
