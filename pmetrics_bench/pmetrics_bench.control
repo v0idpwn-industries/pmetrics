@@ -1,0 +1,7 @@
+# pmetrics_bench extension
+comment = 'Benchmark extension for testing pmetrics lock contention'
+default_version = '0.1'
+module_pathname = '$libdir/pmetrics_bench'
+relocatable = false
+schema = 'pmetrics_bench'
+requires = 'pmetrics'
