@@ -8,6 +8,10 @@ pmetrics-exporter-*
 *.a
 *.so
 
+# Allow Go module files (overrides parent .gitignore *.mod*)
+!go.mod
+!go.sum
+
 # Test artifacts
 *.test
 *.out
