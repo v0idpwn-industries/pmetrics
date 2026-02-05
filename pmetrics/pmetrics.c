@@ -87,7 +87,7 @@ typedef struct {
 
 typedef struct {
 	MetricKey key;
-	int64 value;
+	pg_atomic_uint64 value;
 } Metric;
 
 static PMetricsSharedState *shared_state = NULL;
@@ -373,6 +373,7 @@ static int64 increment_by(const char *name_str, Jsonb *labels_jsonb,
 	bool found;
 	dshash_table *table;
 	int64 result;
+	uint64 old_value;
 
 	table = get_metrics_table();
 	if (table == NULL)
@@ -380,16 +381,29 @@ static int64 increment_by(const char *name_str, Jsonb *labels_jsonb,
 
 	init_metric_key(&metric_key, name_str, labels_jsonb, type, bucket);
 
-	entry = (Metric *)dshash_find_or_insert(table, &metric_key, &found);
-
-	if (!found)
-		entry->value = 0;
-
-	entry->value += amount;
-	result = entry->value;
+	/* Try shared lock path first for existing metrics, if it doesn't exist,
+	 * take exclusive lock in its bucket and insert it
+	 */
+	entry = (Metric *)dshash_find(table, &metric_key, false);
+	if (likely(entry != NULL)) {
+		old_value = pg_atomic_fetch_add_u64(&entry->value, (uint64)amount);
+		result = (int64)(old_value + (uint64)amount);
+	} else {
+		entry = (Metric *)dshash_find_or_insert(table, &metric_key, &found);
+		if (!found) {
+			/* We inserted it, initialize */
+			pg_atomic_init_u64(&entry->value, (uint64)amount);
+			result = amount;
+		} else {
+			/* Race: another backend inserted it between our find and
+			 * find_or_insert
+			 */
+			old_value = pg_atomic_fetch_add_u64(&entry->value, (uint64)amount);
+			result = (int64)(old_value + (uint64)amount);
+		}
+	}
 
 	dshash_release_lock(table, entry);
-
 	return result;
 }
 
@@ -561,6 +575,7 @@ Datum list_metrics(PG_FUNCTION_ARGS)
 		dshash_seq_init(&status, table, false); /* false = shared lock */
 		while ((metric = (Metric *)dshash_seq_next(&status)) != NULL) {
 			Jsonb *labels_copy = NULL;
+			uint64 value_snapshot;
 
 			/* Expand array if needed */
 			if (count >= capacity) {
@@ -571,7 +586,11 @@ Datum list_metrics(PG_FUNCTION_ARGS)
 
 			/* Copy the metric to backend-local memory */
 			metrics[count] = (Metric *)palloc(sizeof(Metric));
-			memcpy(metrics[count], metric, sizeof(Metric));
+			/* Copy the key part */
+			memcpy(&metrics[count]->key, &metric->key, sizeof(MetricKey));
+			/* Atomically read the value */
+			value_snapshot = pg_atomic_read_u64(&metric->value);
+			pg_atomic_init_u64(&metrics[count]->value, value_snapshot);
 
 			/* Copy JSONB labels to backend-local memory if they exist in DSA */
 			if (metric->key.labels_location == LABELS_DSA &&
@@ -641,7 +660,7 @@ Datum list_metrics(PG_FUNCTION_ARGS)
 
 		values[2] = CStringGetTextDatum(type_str);
 		values[3] = Int32GetDatum(metric->key.bucket);
-		values[4] = Int64GetDatum(metric->value);
+		values[4] = Int64GetDatum((int64)pg_atomic_read_u64(&metric->value));
 		tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
 		result = HeapTupleGetDatum(tuple);
 		SRF_RETURN_NEXT(funcctx, result);
@@ -681,7 +700,6 @@ pmetrics_set_gauge(const char *name_str, Jsonb *labels_jsonb, int64 value)
 	MetricKey metric_key;
 	bool found;
 	dshash_table *table;
-	int64 result;
 
 	validate_inputs(name_str);
 
@@ -691,14 +709,26 @@ pmetrics_set_gauge(const char *name_str, Jsonb *labels_jsonb, int64 value)
 
 	init_metric_key(&metric_key, name_str, labels_jsonb, METRIC_TYPE_GAUGE, 0);
 
-	entry = (Metric *)dshash_find_or_insert(table, &metric_key, &found);
-
-	entry->value = value;
-	result = entry->value;
+	/* Try shared lock path first for existing metrics, if it doesn't exist,
+	 * take exclusive lock in its bucket and insert it
+	 */
+	entry = (Metric *)dshash_find(table, &metric_key, false);
+	if (likely(entry != NULL)) {
+		pg_atomic_write_u64(&entry->value, (uint64)value);
+	} else {
+		entry = (Metric *)dshash_find_or_insert(table, &metric_key, &found);
+		if (!found) {
+			pg_atomic_init_u64(&entry->value, (uint64)value);
+		} else {
+			/* Race: another backend inserted it between our find and
+			 * find_or_insert
+			 */
+			pg_atomic_write_u64(&entry->value, (uint64)value);
+		}
+	}
 
 	dshash_release_lock(table, entry);
-
-	return result;
+	return value;
 }
 
 __attribute__((visibility("default"))) int64
